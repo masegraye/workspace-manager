@@ -65,12 +65,6 @@ source <(wsm _carapace)
 - **Tags**: Auto-complete repository tags for the `--tags` flag in `list repos`
 - **Dynamic Context**: Completions adapt based on your actual data (workspaces, repositories, tags)
 
-### Demo
-
-See the completion in action:
-
-![Completion Demo](demo/completion-demo.gif)
-
 ## Quick Start
 
 ### 1. Discover Repositories
