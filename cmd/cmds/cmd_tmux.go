@@ -18,6 +18,7 @@ import (
 
 func NewTmuxCommand() *cobra.Command {
 	var workspace string
+	var profile string
 
 	cmd := &cobra.Command{
 		Use:   "tmux [workspace-name]",
@@ -27,26 +28,29 @@ If no workspace name is provided, attempts to detect the current workspace.
 
 The command will:
 1. Create a new tmux session or attach to existing one with the workspace name
-2. Execute commands from .wsm/tmuxrc in the workspace root (if exists)
-3. Execute commands from .wsm/tmuxrc in all top-level directories (if exists)`,
+2. Execute commands from tmux.conf files based on profile selection:
+   - If --profile is specified: .wsm/profiles/PROFILE/tmux.conf
+   - Otherwise: .wsm/tmux.conf (fallback to default behavior)
+3. Search both workspace root and all top-level directories`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			workspaceName := workspace
 			if len(args) > 0 {
 				workspaceName = args[0]
 			}
-			return runTmux(cmd.Context(), workspaceName)
+			return runTmux(cmd.Context(), workspaceName, profile)
 		},
 	}
 
 	cmd.Flags().StringVar(&workspace, "workspace", "", "Workspace name")
+	cmd.Flags().StringVar(&profile, "profile", "", "Tmux profile to use (looks for .wsm/profiles/PROFILE/tmux.conf)")
 
 	carapace.Gen(cmd).PositionalCompletion(WorkspaceNameCompletion())
 
 	return cmd
 }
 
-func runTmux(ctx context.Context, workspaceName string) error {
+func runTmux(ctx context.Context, workspaceName, profile string) error {
 	// If no workspace specified, try to detect current workspace
 	if workspaceName == "" {
 		cwd, err := os.Getwd()
@@ -91,9 +95,9 @@ func runTmux(ctx context.Context, workspaceName string) error {
 		return errors.Wrapf(err, "failed to create tmux session '%s'", sessionName)
 	}
 
-	// Execute tmuxrc files
-	if err := executeTmuxrcFiles(ctx, workspace, sessionName); err != nil {
-		log.Warn().Err(err).Msg("Failed to execute tmuxrc files")
+	// Execute tmux.conf files
+	if err := executeTmuxConfFiles(ctx, workspace, sessionName, profile); err != nil {
+		log.Warn().Err(err).Msg("Failed to execute tmux.conf files")
 	}
 
 	// Attach to the session
@@ -104,44 +108,112 @@ func runTmux(ctx context.Context, workspaceName string) error {
 	return attachCmd.Run()
 }
 
-func executeTmuxrcFiles(ctx context.Context, workspace *wsm.Workspace, sessionName string) error {
-	// Execute workspace root .wsm/tmuxrc
-	rootTmuxrc := filepath.Join(workspace.Path, ".wsm", "tmuxrc")
-	if err := executeTmuxrcFile(ctx, rootTmuxrc, sessionName, workspace.Path); err != nil {
-		log.Debug().Err(err).Str("file", rootTmuxrc).Msg("Failed to execute root tmuxrc")
+func executeTmuxConfFiles(ctx context.Context, workspace *wsm.Workspace, sessionName, profile string) error {
+	// Determine tmux.conf file paths based on profile
+	var tmuxConfPaths []TmuxConfPath
+	
+	if profile != "" {
+		// Use profile-specific tmux.conf files
+		tmuxConfPaths = getTmuxConfPathsForProfile(workspace, profile)
+		output.PrintInfo("Using tmux profile: %s", profile)
+	} else {
+		// Use default tmux.conf files
+		tmuxConfPaths = getDefaultTmuxConfPaths(workspace)
 	}
 
-	// Execute .wsm/tmuxrc files in all top-level directories
-	entries, err := os.ReadDir(workspace.Path)
-	if err != nil {
-		return errors.Wrap(err, "failed to read workspace directory")
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			dirPath := filepath.Join(workspace.Path, entry.Name())
-			tmuxrcPath := filepath.Join(dirPath, ".wsm", "tmuxrc")
-			
-			if err := executeTmuxrcFile(ctx, tmuxrcPath, sessionName, dirPath); err != nil {
-				log.Debug().Err(err).Str("file", tmuxrcPath).Msg("Failed to execute directory tmuxrc")
-			}
+	// Execute all found tmux.conf files
+	for _, confPath := range tmuxConfPaths {
+		if err := executeTmuxConfFile(ctx, confPath.FilePath, sessionName, confPath.WorkingDir); err != nil {
+			log.Debug().Err(err).Str("file", confPath.FilePath).Msg("Failed to execute tmux.conf")
 		}
 	}
 
 	return nil
 }
 
-func executeTmuxrcFile(ctx context.Context, tmuxrcPath, sessionName, workingDir string) error {
+// TmuxConfPath represents a tmux.conf file with its working directory
+type TmuxConfPath struct {
+	FilePath   string
+	WorkingDir string
+}
+
+// getTmuxConfPathsForProfile returns profile-specific tmux.conf file paths
+func getTmuxConfPathsForProfile(workspace *wsm.Workspace, profile string) []TmuxConfPath {
+	var paths []TmuxConfPath
+
+	// Workspace root profile tmux.conf
+	rootProfileConf := filepath.Join(workspace.Path, ".wsm", "profiles", profile, "tmux.conf")
+	paths = append(paths, TmuxConfPath{
+		FilePath:   rootProfileConf,
+		WorkingDir: workspace.Path,
+	})
+
+	// Repository profile tmux.conf files
+	entries, err := os.ReadDir(workspace.Path)
+	if err != nil {
+		log.Debug().Err(err).Msg("Failed to read workspace directory for profile tmux.conf")
+		return paths
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			dirPath := filepath.Join(workspace.Path, entry.Name())
+			profileConfPath := filepath.Join(dirPath, ".wsm", "profiles", profile, "tmux.conf")
+			
+			paths = append(paths, TmuxConfPath{
+				FilePath:   profileConfPath,
+				WorkingDir: dirPath,
+			})
+		}
+	}
+
+	return paths
+}
+
+// getDefaultTmuxConfPaths returns default tmux.conf file paths
+func getDefaultTmuxConfPaths(workspace *wsm.Workspace) []TmuxConfPath {
+	var paths []TmuxConfPath
+
+	// Workspace root tmux.conf
+	rootTmuxConf := filepath.Join(workspace.Path, ".wsm", "tmux.conf")
+	paths = append(paths, TmuxConfPath{
+		FilePath:   rootTmuxConf,
+		WorkingDir: workspace.Path,
+	})
+
+	// Repository tmux.conf files
+	entries, err := os.ReadDir(workspace.Path)
+	if err != nil {
+		log.Debug().Err(err).Msg("Failed to read workspace directory for default tmux.conf")
+		return paths
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			dirPath := filepath.Join(workspace.Path, entry.Name())
+			tmuxConfPath := filepath.Join(dirPath, ".wsm", "tmux.conf")
+			
+			paths = append(paths, TmuxConfPath{
+				FilePath:   tmuxConfPath,
+				WorkingDir: dirPath,
+			})
+		}
+	}
+
+	return paths
+}
+
+func executeTmuxConfFile(ctx context.Context, tmuxConfPath, sessionName, workingDir string) error {
 	// Check if file exists
-	if _, err := os.Stat(tmuxrcPath); os.IsNotExist(err) {
+	if _, err := os.Stat(tmuxConfPath); os.IsNotExist(err) {
 		return nil // File doesn't exist, not an error
 	}
 
-	log.Debug().Str("file", tmuxrcPath).Str("session", sessionName).Msg("Executing tmuxrc file")
+	log.Debug().Str("file", tmuxConfPath).Str("session", sessionName).Msg("Executing tmux.conf file")
 
-	file, err := os.Open(tmuxrcPath)
+	file, err := os.Open(tmuxConfPath)
 	if err != nil {
-		return errors.Wrapf(err, "failed to open tmuxrc file: %s", tmuxrcPath)
+		return errors.Wrapf(err, "failed to open tmux.conf file: %s", tmuxConfPath)
 	}
 	defer file.Close()
 
@@ -167,7 +239,7 @@ func executeTmuxrcFile(ctx context.Context, tmuxrcPath, sessionName, workingDir 
 	}
 
 	if err := scanner.Err(); err != nil {
-		return errors.Wrapf(err, "failed to read tmuxrc file: %s", tmuxrcPath)
+		return errors.Wrapf(err, "failed to read tmux.conf file: %s", tmuxConfPath)
 	}
 
 	return nil
