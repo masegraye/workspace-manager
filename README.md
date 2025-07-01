@@ -1,8 +1,8 @@
-# Workspace Manager
+# WSM (Workspace Manager)
 
 **A powerful CLI tool for managing multi-repository workspaces with git worktrees**
 
-Workspace Manager simplifies coordinated development across multiple related git repositories by automating workspace setup, git operations, and status tracking. Perfect for microservices, monorepos, or any project spanning multiple repositories.
+WSM simplifies coordinated development across multiple related git repositories by automating workspace setup, git operations, and status tracking. Perfect for microservices, monorepos, or any project spanning multiple repositories.
 
 ## Features
 
@@ -14,6 +14,9 @@ Workspace Manager simplifies coordinated development across multiple related git
 - **🌿 Branch Management**: Coordinate branch operations across all workspace repositories
 - **🔧 Go Integration**: Automatic `go.work` file generation for Go projects
 - **🧹 Safe Cleanup**: Proper worktree removal and workspace cleanup
+- **💻 Tmux Integration**: Create and manage tmux sessions with profile-based configuration for each workspace
+- **⚙️ Setup Scripts**: Automatic execution of setup scripts from `.wsm/setup.sh` and `.wsm/setup.d/` directories
+- **📝 Metadata Files**: Automatic creation of `.wsm/wsm.json` with workspace information and environment variables
 
 ## Installation
 
@@ -23,9 +26,9 @@ Download the latest binary from the [releases page](https://github.com/go-go-gol
 
 ```bash
 # Linux/macOS
-curl -L https://github.com/go-go-golems/workspace-manager/releases/latest/download/workspace-manager-$(uname -s)-$(uname -m) -o workspace-manager
-chmod +x workspace-manager
-sudo mv workspace-manager /usr/local/bin/
+curl -L https://github.com/go-go-golems/workspace-manager/releases/latest/download/wsm-$(uname -s)-$(uname -m) -o wsm
+chmod +x wsm
+sudo mv wsm /usr/local/bin/
 ```
 
 ### Using Go Install
@@ -44,7 +47,7 @@ go build ./cmd/workspace-manager
 
 ## Shell Completion
 
-Workspace Manager supports intelligent shell completion via [carapace](https://github.com/carapace-sh/carapace), providing context-aware suggestions for commands, workspace names, repository names, and tags.
+WSM supports intelligent shell completion via [carapace](https://github.com/carapace-sh/carapace), providing context-aware suggestions for commands, workspace names, repository names, and tags.
 
 ### Setup
 
@@ -69,14 +72,14 @@ source <(wsm _carapace)
 
 ### 1. Discover Repositories
 
-First, let the workspace manager discover your existing git repositories:
+First, let WSM discover your existing git repositories:
 
 ```bash
 # Discover repositories in your common development directories
-workspace-manager discover ~/code ~/projects --recursive
+wsm discover ~/code ~/projects --recursive
 
 # Discover with custom depth limit
-workspace-manager discover ~/code --max-depth 2
+wsm discover ~/code --max-depth 2
 ```
 
 ### 2. Create a Workspace
@@ -85,13 +88,13 @@ Create a workspace with multiple repositories for coordinated development:
 
 ```bash
 # Create workspace with automatic branch naming (task/my-feature)
-workspace-manager create my-feature --repos app,lib,shared
+wsm create my-feature --repos app,lib,shared
 
 # Create workspace with custom branch
-workspace-manager create my-feature --repos app,lib,shared --branch feature/new-api
+wsm create my-feature --repos app,lib,shared --branch feature/new-api
 
 # Interactive repository selection
-workspace-manager create my-feature --interactive
+wsm create my-feature --interactive
 ```
 
 ### 2a. Fork an Existing Workspace
@@ -100,13 +103,13 @@ Create a new workspace by forking an existing one:
 
 ```bash
 # Fork the current workspace
-workspace-manager fork my-feature-branch
+wsm fork my-feature-branch
 
 # Fork a specific workspace
-workspace-manager fork my-feature-branch source-workspace
+wsm fork my-feature-branch source-workspace
 
 # Fork with custom branch name
-workspace-manager fork my-feature-branch --branch feature/custom-name
+wsm fork my-feature-branch --branch feature/custom-name
 ```
 
 ### 3. Check Status
@@ -114,26 +117,41 @@ workspace-manager fork my-feature-branch --branch feature/custom-name
 Monitor the status of all repositories in your workspace:
 
 ```bash
-workspace-manager status
+wsm status
 ```
 
 ### 4. Work with Your Code
 
 Navigate to your workspace directory (default: `~/workspaces/YYYY-MM-DD/my-feature/`) and start coding. Each repository is available as a git worktree on your specified branch.
 
-### 5. Merge and Clean Up
+### 5. Start a Tmux Session
+
+Create or attach to a tmux session for your workspace:
+
+```bash
+# Create/attach to tmux session for current workspace
+wsm tmux
+
+# Create/attach to tmux session for specific workspace
+wsm tmux my-feature
+
+# Use a specific profile configuration
+wsm tmux my-feature --profile development
+```
+
+### 6. Merge and Clean Up
 
 When you're done with your work, merge the fork back to its parent branch:
 
 ```bash
 # Merge current fork back to base branch and delete workspace
-workspace-manager merge
+wsm merge
 
 # Merge but keep the workspace
-workspace-manager merge --keep-workspace
+wsm merge --keep-workspace
 
 # Preview merge without executing
-workspace-manager merge --dry-run
+wsm merge --dry-run
 ```
 
 ### 6. Interactive Mode
@@ -146,92 +164,132 @@ workspace-manager merge --dry-run
 
 ```bash
 # Discover repositories in specified paths
-workspace-manager discover [paths...] [flags]
+wsm discover [paths...] [flags]
 
 # Examples
-workspace-manager discover ~/code ~/projects
-workspace-manager discover . --recursive --max-depth 3
+wsm discover ~/code ~/projects
+wsm discover . --recursive --max-depth 3
 ```
 
 ### Workspace Management
 
 ```bash
 # Create a new workspace
-workspace-manager create <workspace-name> --repos <repo1,repo2,repo3>
+wsm create <workspace-name> --repos <repo1,repo2,repo3>
 
 # Fork an existing workspace
-workspace-manager fork <new-workspace-name> [source-workspace-name]
+wsm fork <new-workspace-name> [source-workspace-name]
 
 # Merge fork back to parent branch
-workspace-manager merge [workspace-name]
+wsm merge [workspace-name]
 
 # List all workspaces and repositories
-workspace-manager list
+wsm list
+wsm list repos [--tags tag1,tag2]
+wsm list workspaces
 
 # Get workspace information
-workspace-manager info [workspace-name]
+wsm info [workspace-name]
 
 # Delete a workspace
-workspace-manager delete <workspace-name>
+wsm delete <workspace-name>
 ```
 
 ### Repository Operations
 
 ```bash
 # Add repository to existing workspace
-workspace-manager add <workspace-name> <repo-name>
+wsm add <workspace-name> <repo-name>
 
 # Remove repository from workspace
-workspace-manager remove <workspace-name> <repo-name>
+wsm remove <workspace-name> <repo-name>
 
 # Show workspace status
-workspace-manager status [workspace-name]
+wsm status [workspace-name]
+```
+
+### Tmux Integration
+
+```bash
+# Create or attach to tmux session for current workspace
+wsm tmux
+
+# Create or attach to tmux session for specific workspace
+wsm tmux <workspace-name>
+
+# Use specific profile configuration
+wsm tmux [workspace-name] --profile <profile-name>
 ```
 
 ### Git Operations
 
 ```bash
 # Commit changes across workspace repositories
-workspace-manager commit -m "Your commit message"
+wsm commit -m "Your commit message"
 
 # Push workspace branches
-workspace-manager push [remote]
+wsm push [remote]
 
 # Sync repositories (pull latest changes)
-workspace-manager sync
+wsm sync
+wsm sync all
+wsm sync pull
+wsm sync push
 
 # Show diff across repositories
-workspace-manager diff
+wsm diff
 
 # Show commit history
-workspace-manager log
+wsm log
 
 # Manage branches
-workspace-manager branch <operation>
+wsm branch <operation>
+wsm branch create <branch-name>
+wsm branch switch <branch-name>
+wsm branch list
 
 # Rebase workspace repositories
-workspace-manager rebase
+wsm rebase
 ```
 
 ### Pull Request Management
 
 ```bash
 # Create pull requests for workspace branches
-workspace-manager pr
+wsm pr
 ```
 
 ## Configuration
 
-Workspace Manager uses a configuration directory at `~/.config/workspace-manager/`:
+WSM uses a configuration directory at `~/.config/workspace-manager/`:
 
 - **Registry**: `registry.json` - Discovered repositories catalog
 - **Workspaces**: `workspaces/` - Individual workspace configurations
 - **Default Workspace Location**: `~/workspaces/YYYY-MM-DD/`
 
+### Workspace Structure
+
+Each workspace includes:
+
+- **`.wsm/wsm.json`**: Metadata file with workspace information and environment variables
+- **`.wsm/setup.sh`**: Optional setup script executed after workspace creation/fork
+- **`.wsm/setup.d/`**: Directory for multiple setup scripts (executed in lexical order)
+- **`.wsm/tmux.conf`**: Default tmux configuration for the workspace
+- **`.wsm/profiles/PROFILE/tmux.conf`**: Profile-specific tmux configurations
+
 ### Environment Variables
 
+**Global Configuration:**
 - `WORKSPACE_MANAGER_LOG_LEVEL`: Set logging level (trace, debug, info, warn, error, fatal)
 - `WORKSPACE_MANAGER_WORKSPACE_DIR`: Override default workspace directory
+
+**Setup Script Environment:**
+These variables are automatically provided to setup scripts:
+- `WSM_WORKSPACE_NAME`: Name of the workspace
+- `WSM_WORKSPACE_PATH`: Absolute path to the workspace
+- `WSM_WORKSPACE_BRANCH`: Current workspace branch
+- `WSM_WORKSPACE_BASE_BRANCH`: Base branch (for forks)
+- `WSM_WORKSPACE_REPOS`: Comma-separated list of repository names
 
 ## Examples
 
@@ -239,29 +297,32 @@ Workspace Manager uses a configuration directory at `~/.config/workspace-manager
 
 ```bash
 # Discover your microservices
-workspace-manager discover ~/projects/microservices --recursive
+wsm discover ~/projects/microservices --recursive
 
 # Create workspace for feature development
-workspace-manager create user-auth-feature --repos api-gateway,user-service,auth-service --branch feature/oauth-integration
+wsm create user-auth-feature --repos api-gateway,user-service,auth-service --branch feature/oauth-integration
+
+# Start tmux session with development profile
+wsm tmux user-auth-feature --profile development
 
 # Check status across all services
-workspace-manager status
+wsm status
 
 # Commit changes with consistent message
-workspace-manager commit -m "Add OAuth integration across services"
+wsm commit -m "Add OAuth integration across services"
 
 # Push all branches
-workspace-manager push origin
+wsm push origin
 
 # Merge back to main when done
-workspace-manager merge
+wsm merge
 ```
 
 ### Go Project Development
 
 ```bash
 # Create workspace for Go projects (automatically creates go.work)
-workspace-manager create refactor-database --repos backend,shared-models,migration-tools
+wsm create refactor-database --repos backend,shared-models,migration-tools
 
 # The workspace will include a go.work file for module coordination
 cd ~/workspaces/2025-01-15/refactor-database/
@@ -270,13 +331,19 @@ cat go.work
 # use ./backend
 # use ./shared-models  
 # use ./migration-tools
+
+# Start tmux session for the workspace
+wsm tmux refactor-database
 ```
 
 ### Library and Application Development
 
 ```bash
 # Work on library and its dependent applications simultaneously
-workspace-manager create library-update --repos core-lib,web-app,cli-tool --branch feature/api-v2
+wsm create library-update --repos core-lib,web-app,cli-tool --branch feature/api-v2
+
+# Start tmux session
+wsm tmux library-update
 
 # Make changes to library
 cd ~/workspaces/2025-01-15/library-update/core-lib
@@ -296,18 +363,21 @@ go build ./cmd/cli
 
 ```bash
 # Start with a main workspace
-workspace-manager create main-project --repos app,lib,api --branch main
+wsm create main-project --repos app,lib,api --branch main
 
 # Fork for feature development
-workspace-manager fork feature-auth main-project
+wsm fork feature-auth main-project
 # Creates: task/feature-auth branch from main
+
+# Start tmux session for the feature
+wsm tmux feature-auth
 
 # Work on the feature...
 cd ~/workspaces/2025-01-15/feature-auth/
 # ... make changes ...
 
 # When done, merge back
-workspace-manager merge feature-auth
+wsm merge feature-auth
 # Merges task/feature-auth → main and deletes feature-auth workspace
 ```
 
@@ -315,15 +385,63 @@ workspace-manager merge feature-auth
 
 ```bash
 # Use different branch prefixes for different types of work
-workspace-manager create db-fix --repos backend,migrations --branch-prefix bug
+wsm create db-fix --repos backend,migrations --branch-prefix bug
 # Creates branch: bug/db-fix
 
-workspace-manager create new-api --repos api,client --branch-prefix feature  
+wsm create new-api --repos api,client --branch-prefix feature  
 # Creates branch: feature/new-api
 
 # Fork with custom branch prefix
-workspace-manager fork hotfix-issue --branch-prefix hotfix
+wsm fork hotfix-issue --branch-prefix hotfix
 # Creates branch: hotfix/hotfix-issue
+```
+
+### Setup Scripts and Automation
+
+WSM automatically executes setup scripts after workspace creation:
+
+```bash
+# Create a workspace - setup scripts run automatically
+wsm create my-workspace --repos app,lib
+
+# Setup scripts are executed in this order:
+# 1. .wsm/setup.sh (workspace root)
+# 2. .wsm/setup.d/*.sh (workspace root, lexical order)
+# 3. Each repo's .wsm/setup.sh
+# 4. Each repo's .wsm/setup.d/*.sh (lexical order)
+```
+
+Example setup script (`.wsm/setup.sh`):
+```bash
+#!/bin/bash
+# Environment variables are available:
+echo "Setting up workspace: $WSM_WORKSPACE_NAME"
+echo "Workspace path: $WSM_WORKSPACE_PATH"
+echo "Repositories: $WSM_WORKSPACE_REPOS"
+
+# Install dependencies, setup environment, etc.
+npm install
+```
+
+### Tmux Profiles and Configuration
+
+Create profile-specific tmux configurations:
+
+```bash
+# Use development profile
+wsm tmux my-workspace --profile development
+
+# Use testing profile
+wsm tmux my-workspace --profile testing
+```
+
+Example tmux.conf (`.wsm/profiles/development/tmux.conf`):
+```
+# Development profile tmux configuration
+new-window -n "editor" "vim ."
+new-window -n "server" "npm run dev"
+new-window -n "tests" "npm run test:watch"
+split-window -h "tail -f logs/app.log"
 ```
 
 ### Agent Configuration
@@ -331,7 +449,7 @@ workspace-manager fork hotfix-issue --branch-prefix hotfix
 Copy an `AGENT.md` file to your workspace for AI coding assistants:
 
 ```bash
-workspace-manager create my-workspace --repos app,lib --agent-source ~/templates/AGENT.md
+wsm create my-workspace --repos app,lib --agent-source ~/templates/AGENT.md
 ```
 
 ### Dry Run Mode
@@ -340,26 +458,28 @@ Preview operations without making changes:
 
 ```bash
 # Preview workspace creation
-workspace-manager create test-workspace --repos app,lib --dry-run
+wsm create test-workspace --repos app,lib --dry-run
 
 # Preview fork operation
-workspace-manager fork new-feature --dry-run
+wsm fork new-feature --dry-run
 
 # Preview merge operation
-workspace-manager merge --dry-run
+wsm merge --dry-run
 ```
 
 ## How It Works
 
-Workspace Manager leverages **git worktrees** to create efficient multi-repository workspaces:
+WSM leverages **git worktrees** to create efficient multi-repository workspaces:
 
 1. **Discovery**: Scans directories to build a registry of available repositories
 2. **Workspace Creation**: Creates a workspace directory with git worktrees for each repository
-3. **Fork & Merge**: Fork workspaces for feature development and merge back to parent branches
-4. **Branch Coordination**: Ensures all repositories are on the same branch (creates if needed)
-5. **Go Integration**: Automatically generates `go.work` files for Go projects
-6. **Status Tracking**: Monitors git status across all workspace repositories
-7. **Safe Operations**: Provides rollback mechanisms and proper cleanup
+3. **Setup Automation**: Executes setup scripts and creates metadata files automatically
+4. **Fork & Merge**: Fork workspaces for feature development and merge back to parent branches
+5. **Branch Coordination**: Ensures all repositories are on the same branch (creates if needed)
+6. **Go Integration**: Automatically generates `go.work` files for Go projects
+7. **Tmux Integration**: Creates and manages tmux sessions with profile-based configurations
+8. **Status Tracking**: Monitors git status across all workspace repositories
+9. **Safe Operations**: Provides rollback mechanisms and proper cleanup
 
 ### Why Git Worktrees?
 
@@ -384,9 +504,9 @@ go test ./...
 
 ### Adding New Commands
 
-1. Create `cmd/cmd_<name>.go`
+1. Create `cmd/cmds/cmd_<name>.go`
 2. Implement `func New<Name>Command() *cobra.Command`
-3. Add to root command in `cmd/root.go`
+3. Add to root command in `cmd/cmds/root.go`
 4. Add business logic to `WorkspaceManager` if needed
 
 ## License

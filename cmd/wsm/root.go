@@ -75,6 +75,7 @@ func init() {
 		cmds.NewRebaseCommand(),
 		cmds.NewDiffCommand(),
 		cmds.NewLogCommand(),
+		cmds.NewTmuxCommand(),
 	)
 
 	carapace.Gen(rootCmd)
