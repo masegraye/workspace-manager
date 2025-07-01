@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -214,12 +215,34 @@ func (wm *WorkspaceManager) createWorkspaceStructure(ctx context.Context, worksp
 		}
 	}
 
+	// Create wsm.json metadata file
+	if err := wm.createWorkspaceMetadata(workspace); err != nil {
+		output.LogWarn(
+			fmt.Sprintf("Failed to create wsm.json metadata file for workspace '%s'", workspace.Name),
+			"Failed to create workspace metadata file",
+			"workspace", workspace.Name,
+			"error", err,
+		)
+		// Don't fail workspace creation if metadata file creation fails
+	}
+
 	output.LogInfo(
 		fmt.Sprintf("Successfully created workspace structure for '%s' with %d worktrees", workspace.Name, len(createdWorktrees)),
 		"Successfully created workspace structure",
 		"workspace", workspace.Name,
 		"worktrees", len(createdWorktrees),
 	)
+
+	// Execute setup scripts if they exist
+	if err := wm.executeSetupScripts(ctx, workspace); err != nil {
+		output.LogWarn(
+			fmt.Sprintf("Failed to execute setup scripts for workspace '%s'", workspace.Name),
+			"Setup scripts failed, workspace created but setup incomplete",
+			"workspace", workspace.Name,
+			"error", err,
+		)
+		// Don't fail workspace creation if setup scripts fail
+	}
 
 	return nil
 }
@@ -1112,6 +1135,29 @@ func (wm *WorkspaceManager) AddRepositoryToWorkspace(ctx context.Context, worksp
 		return errors.Wrap(err, "failed to save updated workspace configuration")
 	}
 
+	// Update wsm.json metadata file
+	if err := wm.createWorkspaceMetadata(workspace); err != nil {
+		output.LogWarn(
+			fmt.Sprintf("Failed to update wsm.json metadata file for workspace '%s'", workspace.Name),
+			"Failed to update workspace metadata file",
+			"workspace", workspace.Name,
+			"error", err,
+		)
+		// Don't fail add operation if metadata file update fails
+	}
+
+	// Execute setup scripts for the newly added repository
+	if err := wm.executeSetupScriptsForRepo(ctx, workspace, repo); err != nil {
+		output.LogWarn(
+			fmt.Sprintf("Failed to execute setup scripts for newly added repository '%s'", repo.Name),
+			"Setup scripts failed for new repository",
+			"workspace", workspace.Name,
+			"repo", repo.Name,
+			"error", err,
+		)
+		// Don't fail add operation if setup scripts fail
+	}
+
 	fmt.Printf("✓ Successfully added repository '%s' to workspace '%s'\n", repoName, workspaceName)
 	return nil
 }
@@ -1434,4 +1480,383 @@ func (wm *WorkspaceManager) getUntrackedFiles(ctx context.Context, repoPath stri
 
 	files := strings.Split(strings.TrimSpace(string(output)), "\n")
 	return files, nil
+}
+
+// executeSetupScripts executes setup scripts after workspace creation
+func (wm *WorkspaceManager) executeSetupScripts(ctx context.Context, workspace *Workspace) error {
+	// Prepare environment variables
+	env := os.Environ()
+	env = append(env, fmt.Sprintf("WSM_WORKSPACE_NAME=%s", workspace.Name))
+	env = append(env, fmt.Sprintf("WSM_WORKSPACE_PATH=%s", workspace.Path))
+	env = append(env, fmt.Sprintf("WSM_WORKSPACE_BRANCH=%s", workspace.Branch))
+	if workspace.BaseBranch != "" {
+		env = append(env, fmt.Sprintf("WSM_WORKSPACE_BASE_BRANCH=%s", workspace.BaseBranch))
+	}
+	
+	// Add repository names as comma-separated list
+	repoNames := make([]string, len(workspace.Repositories))
+	for i, repo := range workspace.Repositories {
+		repoNames[i] = repo.Name
+	}
+	env = append(env, fmt.Sprintf("WSM_WORKSPACE_REPOS=%s", strings.Join(repoNames, ",")))
+
+	// Execute workspace root setup.sh
+	rootSetupScript := filepath.Join(workspace.Path, ".wsm", "setup.sh")
+	if err := wm.executeSetupScript(ctx, rootSetupScript, workspace.Path, env); err != nil {
+		output.LogWarn(
+			fmt.Sprintf("Failed to execute root setup script: %s", rootSetupScript),
+			"Root setup script failed",
+			"script", rootSetupScript,
+			"error", err,
+		)
+	}
+
+	// Collect and execute setup.d scripts in order across all locations
+	setupScripts, err := wm.collectSetupDScripts(workspace)
+	if err != nil {
+		return errors.Wrap(err, "failed to collect setup.d scripts")
+	}
+
+	for _, script := range setupScripts {
+		if err := wm.executeSetupScript(ctx, script.Path, script.WorkingDir, env); err != nil {
+			output.LogWarn(
+				fmt.Sprintf("Failed to execute setup script: %s", script.Path),
+				"Setup script failed",
+				"script", script.Path,
+				"workingDir", script.WorkingDir,
+				"error", err,
+			)
+		}
+	}
+
+	return nil
+}
+
+// SetupScript represents a setup script with its execution context
+type SetupScript struct {
+	Path       string
+	WorkingDir string
+	Name       string
+}
+
+// collectSetupDScripts collects all setup.d scripts from workspace root and repository directories
+func (wm *WorkspaceManager) collectSetupDScripts(workspace *Workspace) ([]SetupScript, error) {
+	var scripts []SetupScript
+
+	// Collect scripts from workspace root .wsm/setup.d/
+	rootSetupDir := filepath.Join(workspace.Path, ".wsm", "setup.d")
+	rootScripts, err := wm.getSetupDScripts(rootSetupDir, workspace.Path)
+	if err != nil {
+		output.LogWarn(
+			fmt.Sprintf("Failed to read root setup.d directory: %s", rootSetupDir),
+			"Failed to read root setup.d directory",
+			"dir", rootSetupDir,
+			"error", err,
+		)
+	} else {
+		scripts = append(scripts, rootScripts...)
+	}
+
+	// Collect scripts from each repository's .wsm/setup.d/
+	for _, repo := range workspace.Repositories {
+		repoSetupDir := filepath.Join(workspace.Path, repo.Name, ".wsm", "setup.d")
+		repoScripts, err := wm.getSetupDScripts(repoSetupDir, filepath.Join(workspace.Path, repo.Name))
+		if err != nil {
+			output.LogWarn(
+				fmt.Sprintf("Failed to read repository setup.d directory: %s", repoSetupDir),
+				"Failed to read repository setup.d directory",
+				"repo", repo.Name,
+				"dir", repoSetupDir,
+				"error", err,
+			)
+		} else {
+			scripts = append(scripts, repoScripts...)
+		}
+	}
+
+	// Sort scripts by name for consistent execution order
+	sort.Slice(scripts, func(i, j int) bool {
+		return scripts[i].Name < scripts[j].Name
+	})
+
+	return scripts, nil
+}
+
+// getSetupDScripts gets executable scripts from a setup.d directory
+func (wm *WorkspaceManager) getSetupDScripts(setupDir, workingDir string) ([]SetupScript, error) {
+	var scripts []SetupScript
+
+	entries, err := os.ReadDir(setupDir)
+	if os.IsNotExist(err) {
+		return scripts, nil // Directory doesn't exist, not an error
+	}
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to read setup.d directory: %s", setupDir)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		scriptPath := filepath.Join(setupDir, entry.Name())
+		
+		// Check if file is executable
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		
+		if info.Mode()&0111 == 0 { // Not executable
+			continue
+		}
+
+		scripts = append(scripts, SetupScript{
+			Path:       scriptPath,
+			WorkingDir: workingDir,
+			Name:       entry.Name(),
+		})
+	}
+
+	return scripts, nil
+}
+
+// executeSetupScript executes a single setup script
+func (wm *WorkspaceManager) executeSetupScript(ctx context.Context, scriptPath, workingDir string, env []string) error {
+	// Check if script exists
+	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+		return nil // Script doesn't exist, not an error
+	}
+
+	output.PrintInfo("Executing setup script: %s", filepath.Base(scriptPath))
+	
+	cmd := exec.CommandContext(ctx, "bash", scriptPath)
+	cmd.Dir = workingDir
+	cmd.Env = env
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return errors.Wrapf(err, "script execution failed: %s", scriptPath)
+	}
+
+	output.PrintInfo("Setup script completed: %s", filepath.Base(scriptPath))
+	return nil
+}
+
+// PreviewSetupScripts shows which setup scripts would be executed in dry-run mode
+func (wm *WorkspaceManager) PreviewSetupScripts(workspace *Workspace, stepNum int) error {
+	fmt.Printf("  %d. Create workspace metadata file:\n", stepNum)
+	fmt.Printf("     - %s/.wsm/wsm.json (JSON with workspace information)\n", workspace.Path)
+	fmt.Printf("  %d. Execute setup scripts:\n", stepNum+1)
+
+	// Check for workspace root setup.sh
+	rootSetupScript := filepath.Join(workspace.Path, ".wsm", "setup.sh")
+	fmt.Printf("     - %s (working dir: %s)\n", rootSetupScript, workspace.Path)
+
+	// Preview setup.d scripts
+	setupScripts, err := wm.collectSetupDScriptsPreview(workspace)
+	if err != nil {
+		return errors.Wrap(err, "failed to collect setup.d scripts for preview")
+	}
+
+	if len(setupScripts) > 0 {
+		fmt.Printf("     - setup.d scripts (in execution order):\n")
+		for _, script := range setupScripts {
+			fmt.Printf("       • %s (working dir: %s)\n", script.Path, script.WorkingDir)
+		}
+	}
+
+	fmt.Printf("     Environment variables:\n")
+	fmt.Printf("       WSM_WORKSPACE_NAME=%s\n", workspace.Name)
+	fmt.Printf("       WSM_WORKSPACE_PATH=%s\n", workspace.Path)
+	fmt.Printf("       WSM_WORKSPACE_BRANCH=%s\n", workspace.Branch)
+	if workspace.BaseBranch != "" {
+		fmt.Printf("       WSM_WORKSPACE_BASE_BRANCH=%s\n", workspace.BaseBranch)
+	}
+	
+	repoNames := make([]string, len(workspace.Repositories))
+	for i, repo := range workspace.Repositories {
+		repoNames[i] = repo.Name
+	}
+	fmt.Printf("       WSM_WORKSPACE_REPOS=%s\n", strings.Join(repoNames, ","))
+
+	return nil
+}
+
+// collectSetupDScriptsPreview is like collectSetupDScripts but works with hypothetical workspace structure
+func (wm *WorkspaceManager) collectSetupDScriptsPreview(workspace *Workspace) ([]SetupScript, error) {
+	var scripts []SetupScript
+
+	// Add hypothetical scripts from workspace root .wsm/setup.d/
+	rootSetupDir := filepath.Join(workspace.Path, ".wsm", "setup.d")
+	scripts = append(scripts, SetupScript{
+		Path:       filepath.Join(rootSetupDir, "*.sh"),
+		WorkingDir: workspace.Path,
+		Name:       "00-workspace-setup",
+	})
+
+	// Add hypothetical scripts from each repository's .wsm/setup.d/
+	for _, repo := range workspace.Repositories {
+		repoSetupDir := filepath.Join(workspace.Path, repo.Name, ".wsm", "setup.d")
+		scripts = append(scripts, SetupScript{
+			Path:       filepath.Join(repoSetupDir, "*.sh"),
+			WorkingDir: filepath.Join(workspace.Path, repo.Name),
+			Name:       fmt.Sprintf("10-%s-setup", repo.Name),
+		})
+	}
+
+	// Sort scripts by name for consistent execution order
+	sort.Slice(scripts, func(i, j int) bool {
+		return scripts[i].Name < scripts[j].Name
+	})
+
+	return scripts, nil
+}
+
+// WorkspaceMetadata represents the JSON structure for wsm.json
+type WorkspaceMetadata struct {
+	Name         string                 `json:"name"`
+	Path         string                 `json:"path"`
+	Branch       string                 `json:"branch"`
+	BaseBranch   string                 `json:"baseBranch,omitempty"`
+	GoWorkspace  bool                   `json:"goWorkspace"`
+	AgentMD      string                 `json:"agentMD,omitempty"`
+	CreatedAt    time.Time              `json:"createdAt"`
+	Repositories []RepositoryMetadata   `json:"repositories"`
+	Environment  map[string]string      `json:"environment"`
+}
+
+// RepositoryMetadata represents repository information in the metadata
+type RepositoryMetadata struct {
+	Name       string   `json:"name"`
+	Path       string   `json:"path"`
+	Categories []string `json:"categories"`
+	WorktreePath string `json:"worktreePath"`
+}
+
+// createWorkspaceMetadata creates a wsm.json file with workspace metadata
+func (wm *WorkspaceManager) createWorkspaceMetadata(workspace *Workspace) error {
+	// Create .wsm directory if it doesn't exist
+	wsmDir := filepath.Join(workspace.Path, ".wsm")
+	if err := os.MkdirAll(wsmDir, 0755); err != nil {
+		return errors.Wrapf(err, "failed to create .wsm directory: %s", wsmDir)
+	}
+
+	// Prepare repository metadata
+	repoMetadata := make([]RepositoryMetadata, len(workspace.Repositories))
+	for i, repo := range workspace.Repositories {
+		repoMetadata[i] = RepositoryMetadata{
+			Name:         repo.Name,
+			Path:         repo.Path,
+			Categories:   repo.Categories,
+			WorktreePath: filepath.Join(workspace.Path, repo.Name),
+		}
+	}
+
+	// Prepare environment variables
+	repoNames := make([]string, len(workspace.Repositories))
+	for i, repo := range workspace.Repositories {
+		repoNames[i] = repo.Name
+	}
+
+	environment := map[string]string{
+		"WSM_WORKSPACE_NAME":   workspace.Name,
+		"WSM_WORKSPACE_PATH":   workspace.Path,
+		"WSM_WORKSPACE_BRANCH": workspace.Branch,
+		"WSM_WORKSPACE_REPOS":  strings.Join(repoNames, ","),
+	}
+	
+	if workspace.BaseBranch != "" {
+		environment["WSM_WORKSPACE_BASE_BRANCH"] = workspace.BaseBranch
+	}
+
+	// Create metadata structure
+	metadata := WorkspaceMetadata{
+		Name:         workspace.Name,
+		Path:         workspace.Path,
+		Branch:       workspace.Branch,
+		BaseBranch:   workspace.BaseBranch,
+		GoWorkspace:  workspace.GoWorkspace,
+		AgentMD:      workspace.AgentMD,
+		CreatedAt:    time.Now(),
+		Repositories: repoMetadata,
+		Environment:  environment,
+	}
+
+	// Write JSON file
+	metadataPath := filepath.Join(wsmDir, "wsm.json")
+	jsonData, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return errors.Wrap(err, "failed to marshal workspace metadata to JSON")
+	}
+
+	if err := os.WriteFile(metadataPath, jsonData, 0644); err != nil {
+		return errors.Wrapf(err, "failed to write workspace metadata file: %s", metadataPath)
+	}
+
+	output.LogInfo(
+		fmt.Sprintf("Created workspace metadata file: %s", metadataPath),
+		"Created workspace metadata file",
+		"metadataPath", metadataPath,
+	)
+
+	return nil
+}
+
+// executeSetupScriptsForRepo executes setup scripts for a newly added repository
+func (wm *WorkspaceManager) executeSetupScriptsForRepo(ctx context.Context, workspace *Workspace, repo Repository) error {
+	// Prepare environment variables
+	env := os.Environ()
+	env = append(env, fmt.Sprintf("WSM_WORKSPACE_NAME=%s", workspace.Name))
+	env = append(env, fmt.Sprintf("WSM_WORKSPACE_PATH=%s", workspace.Path))
+	env = append(env, fmt.Sprintf("WSM_WORKSPACE_BRANCH=%s", workspace.Branch))
+	if workspace.BaseBranch != "" {
+		env = append(env, fmt.Sprintf("WSM_WORKSPACE_BASE_BRANCH=%s", workspace.BaseBranch))
+	}
+	
+	// Add repository names as comma-separated list
+	repoNames := make([]string, len(workspace.Repositories))
+	for i, r := range workspace.Repositories {
+		repoNames[i] = r.Name
+	}
+	env = append(env, fmt.Sprintf("WSM_WORKSPACE_REPOS=%s", strings.Join(repoNames, ",")))
+	env = append(env, fmt.Sprintf("WSM_ADDED_REPO=%s", repo.Name))
+
+	// Execute setup scripts from the newly added repository's .wsm/setup.d/
+	repoSetupDir := filepath.Join(workspace.Path, repo.Name, ".wsm", "setup.d")
+	repoScripts, err := wm.getSetupDScripts(repoSetupDir, filepath.Join(workspace.Path, repo.Name))
+	if err != nil {
+		output.LogWarn(
+			fmt.Sprintf("Failed to read repository setup.d directory: %s", repoSetupDir),
+			"Failed to read repository setup.d directory",
+			"repo", repo.Name,
+			"dir", repoSetupDir,
+			"error", err,
+		)
+		return nil // Not a critical error
+	}
+
+	// Sort scripts by name for consistent execution order
+	sort.Slice(repoScripts, func(i, j int) bool {
+		return repoScripts[i].Name < repoScripts[j].Name
+	})
+
+	if len(repoScripts) > 0 {
+		output.PrintInfo("Executing setup scripts for newly added repository: %s", repo.Name)
+		
+		for _, script := range repoScripts {
+			if err := wm.executeSetupScript(ctx, script.Path, script.WorkingDir, env); err != nil {
+				output.LogWarn(
+					fmt.Sprintf("Failed to execute setup script: %s", script.Path),
+					"Setup script failed",
+					"script", script.Path,
+					"workingDir", script.WorkingDir,
+					"error", err,
+				)
+			}
+		}
+	}
+
+	return nil
 }

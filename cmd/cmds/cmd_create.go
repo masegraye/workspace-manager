@@ -205,12 +205,25 @@ func showWorkspacePreview(workspace *wsm.Workspace) error {
 		}
 	}
 
+	stepNum := 3
 	if workspace.GoWorkspace {
-		fmt.Printf("  3. Initialize go.work and add modules\n")
+		fmt.Printf("  %d. Initialize go.work and add modules\n", stepNum)
+		stepNum++
 	}
 
 	if workspace.AgentMD != "" {
-		fmt.Printf("  4. Copy AGENT.md from %s\n", workspace.AgentMD)
+		fmt.Printf("  %d. Copy AGENT.md from %s\n", stepNum, workspace.AgentMD)
+		stepNum++
+	}
+
+	// Show setup scripts preview
+	wm, err := wsm.NewWorkspaceManager()
+	if err != nil {
+		return errors.Wrap(err, "failed to create workspace manager for preview")
+	}
+	
+	if err := wm.PreviewSetupScripts(workspace, stepNum); err != nil {
+		return errors.Wrap(err, "failed to preview setup scripts")
 	}
 
 	fmt.Println()
