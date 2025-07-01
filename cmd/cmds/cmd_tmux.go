@@ -104,7 +104,7 @@ func runTmux(ctx context.Context, workspaceName, profile string) error {
 func executeTmuxConfFiles(ctx context.Context, workspace *wsm.Workspace, sessionName, profile string) error {
 	// Determine tmux.conf file paths based on profile
 	var tmuxConfPaths []TmuxConfPath
-	
+
 	if profile != "" {
 		// Use profile-specific tmux.conf files
 		tmuxConfPaths = getTmuxConfPathsForProfile(workspace, profile)
@@ -152,7 +152,7 @@ func getTmuxConfPathsForProfile(workspace *wsm.Workspace, profile string) []Tmux
 		if entry.IsDir() {
 			dirPath := filepath.Join(workspace.Path, entry.Name())
 			profileConfPath := filepath.Join(dirPath, ".wsm", "profiles", profile, "tmux.conf")
-			
+
 			paths = append(paths, TmuxConfPath{
 				FilePath:   profileConfPath,
 				WorkingDir: dirPath,
@@ -185,7 +185,7 @@ func getDefaultTmuxConfPaths(workspace *wsm.Workspace) []TmuxConfPath {
 		if entry.IsDir() {
 			dirPath := filepath.Join(workspace.Path, entry.Name())
 			tmuxConfPath := filepath.Join(dirPath, ".wsm", "tmux.conf")
-			
+
 			paths = append(paths, TmuxConfPath{
 				FilePath:   tmuxConfPath,
 				WorkingDir: dirPath,
@@ -208,12 +208,16 @@ func executeTmuxConfFile(ctx context.Context, tmuxConfPath, sessionName, working
 	if err != nil {
 		return errors.Wrapf(err, "failed to open tmux.conf file: %s", tmuxConfPath)
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			log.Warn().Err(closeErr).Str("file", tmuxConfPath).Msg("Failed to close tmux.conf file")
+		}
+	}()
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		
+
 		// Skip empty lines and comments
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -224,7 +228,7 @@ func executeTmuxConfFile(ctx context.Context, tmuxConfPath, sessionName, working
 		// Execute tmux command in the session
 		cmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", sessionName, line, "Enter")
 		cmd.Dir = workingDir
-		
+
 		if err := cmd.Run(); err != nil {
 			log.Warn().Err(err).Str("command", line).Msg("Failed to execute tmux command")
 			// Continue with other commands even if one fails

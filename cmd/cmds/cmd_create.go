@@ -221,7 +221,7 @@ func showWorkspacePreview(workspace *wsm.Workspace) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to create workspace manager for preview")
 	}
-	
+
 	if err := wm.PreviewSetupScripts(workspace, stepNum); err != nil {
 		return errors.Wrap(err, "failed to preview setup scripts")
 	}

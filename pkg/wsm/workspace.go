@@ -1492,7 +1492,7 @@ func (wm *WorkspaceManager) executeSetupScripts(ctx context.Context, workspace *
 	if workspace.BaseBranch != "" {
 		env = append(env, fmt.Sprintf("WSM_WORKSPACE_BASE_BRANCH=%s", workspace.BaseBranch))
 	}
-	
+
 	// Add repository names as comma-separated list
 	repoNames := make([]string, len(workspace.Repositories))
 	for i, repo := range workspace.Repositories {
@@ -1600,13 +1600,13 @@ func (wm *WorkspaceManager) getSetupDScripts(setupDir, workingDir string) ([]Set
 		}
 
 		scriptPath := filepath.Join(setupDir, entry.Name())
-		
+
 		// Check if file is executable
 		info, err := entry.Info()
 		if err != nil {
 			continue
 		}
-		
+
 		if info.Mode()&0111 == 0 { // Not executable
 			continue
 		}
@@ -1629,7 +1629,7 @@ func (wm *WorkspaceManager) executeSetupScript(ctx context.Context, scriptPath, 
 	}
 
 	output.PrintInfo("Executing setup script: %s", filepath.Base(scriptPath))
-	
+
 	cmd := exec.CommandContext(ctx, "bash", scriptPath)
 	cmd.Dir = workingDir
 	cmd.Env = env
@@ -1674,7 +1674,7 @@ func (wm *WorkspaceManager) PreviewSetupScripts(workspace *Workspace, stepNum in
 	if workspace.BaseBranch != "" {
 		fmt.Printf("       WSM_WORKSPACE_BASE_BRANCH=%s\n", workspace.BaseBranch)
 	}
-	
+
 	repoNames := make([]string, len(workspace.Repositories))
 	for i, repo := range workspace.Repositories {
 		repoNames[i] = repo.Name
@@ -1716,23 +1716,23 @@ func (wm *WorkspaceManager) collectSetupDScriptsPreview(workspace *Workspace) ([
 
 // WorkspaceMetadata represents the JSON structure for wsm.json
 type WorkspaceMetadata struct {
-	Name         string                 `json:"name"`
-	Path         string                 `json:"path"`
-	Branch       string                 `json:"branch"`
-	BaseBranch   string                 `json:"baseBranch,omitempty"`
-	GoWorkspace  bool                   `json:"goWorkspace"`
-	AgentMD      string                 `json:"agentMD,omitempty"`
-	CreatedAt    time.Time              `json:"createdAt"`
-	Repositories []RepositoryMetadata   `json:"repositories"`
-	Environment  map[string]string      `json:"environment"`
+	Name         string               `json:"name"`
+	Path         string               `json:"path"`
+	Branch       string               `json:"branch"`
+	BaseBranch   string               `json:"baseBranch,omitempty"`
+	GoWorkspace  bool                 `json:"goWorkspace"`
+	AgentMD      string               `json:"agentMD,omitempty"`
+	CreatedAt    time.Time            `json:"createdAt"`
+	Repositories []RepositoryMetadata `json:"repositories"`
+	Environment  map[string]string    `json:"environment"`
 }
 
 // RepositoryMetadata represents repository information in the metadata
 type RepositoryMetadata struct {
-	Name       string   `json:"name"`
-	Path       string   `json:"path"`
-	Categories []string `json:"categories"`
-	WorktreePath string `json:"worktreePath"`
+	Name         string   `json:"name"`
+	Path         string   `json:"path"`
+	Categories   []string `json:"categories"`
+	WorktreePath string   `json:"worktreePath"`
 }
 
 // createWorkspaceMetadata creates a wsm.json file with workspace metadata
@@ -1766,7 +1766,7 @@ func (wm *WorkspaceManager) createWorkspaceMetadata(workspace *Workspace) error 
 		"WSM_WORKSPACE_BRANCH": workspace.Branch,
 		"WSM_WORKSPACE_REPOS":  strings.Join(repoNames, ","),
 	}
-	
+
 	if workspace.BaseBranch != "" {
 		environment["WSM_WORKSPACE_BASE_BRANCH"] = workspace.BaseBranch
 	}
@@ -1814,7 +1814,7 @@ func (wm *WorkspaceManager) executeSetupScriptsForRepo(ctx context.Context, work
 	if workspace.BaseBranch != "" {
 		env = append(env, fmt.Sprintf("WSM_WORKSPACE_BASE_BRANCH=%s", workspace.BaseBranch))
 	}
-	
+
 	// Add repository names as comma-separated list
 	repoNames := make([]string, len(workspace.Repositories))
 	for i, r := range workspace.Repositories {
@@ -1844,7 +1844,7 @@ func (wm *WorkspaceManager) executeSetupScriptsForRepo(ctx context.Context, work
 
 	if len(repoScripts) > 0 {
 		output.PrintInfo("Executing setup scripts for newly added repository: %s", repo.Name)
-		
+
 		for _, script := range repoScripts {
 			if err := wm.executeSetupScript(ctx, script.Path, script.WorkingDir, env); err != nil {
 				output.LogWarn(
