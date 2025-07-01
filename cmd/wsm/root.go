@@ -77,5 +77,6 @@ func init() {
 		cmds.NewRebaseCommand(),
 		cmds.NewDiffCommand(),
 		cmds.NewLogCommand(),
+		cmds.NewTmuxCommand(),
 	)
 }
