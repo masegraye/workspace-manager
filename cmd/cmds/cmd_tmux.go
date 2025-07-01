@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/carapace-sh/carapace"
 	"github.com/go-go-golems/workspace-manager/pkg/output"
@@ -79,12 +80,8 @@ func runTmux(ctx context.Context, workspaceName, profile string) error {
 
 	if sessionExists {
 		output.PrintInfo("Attaching to existing tmux session: %s", sessionName)
-		// Attach to existing session
-		attachCmd := exec.Command("tmux", "attach-session", "-t", sessionName)
-		attachCmd.Stdin = os.Stdin
-		attachCmd.Stdout = os.Stdout
-		attachCmd.Stderr = os.Stderr
-		return attachCmd.Run()
+		// Replace current process with tmux attach
+		return execTmux("attach-session", "-t", sessionName)
 	}
 
 	output.PrintInfo("Creating new tmux session: %s", sessionName)
@@ -100,12 +97,8 @@ func runTmux(ctx context.Context, workspaceName, profile string) error {
 		log.Warn().Err(err).Msg("Failed to execute tmux.conf files")
 	}
 
-	// Attach to the session
-	attachCmd := exec.Command("tmux", "attach-session", "-t", sessionName)
-	attachCmd.Stdin = os.Stdin
-	attachCmd.Stdout = os.Stdout
-	attachCmd.Stderr = os.Stderr
-	return attachCmd.Run()
+	// Replace current process with tmux attach
+	return execTmux("attach-session", "-t", sessionName)
 }
 
 func executeTmuxConfFiles(ctx context.Context, workspace *wsm.Workspace, sessionName, profile string) error {
@@ -242,5 +235,26 @@ func executeTmuxConfFile(ctx context.Context, tmuxConfPath, sessionName, working
 		return errors.Wrapf(err, "failed to read tmux.conf file: %s", tmuxConfPath)
 	}
 
+	return nil
+}
+
+// execTmux replaces the current process with tmux, allowing the wsm binary to be overwritten
+func execTmux(args ...string) error {
+	// Find tmux binary
+	tmuxPath, err := exec.LookPath("tmux")
+	if err != nil {
+		return errors.Wrap(err, "tmux not found in PATH")
+	}
+
+	// Prepare arguments (tmux + provided args)
+	execArgs := append([]string{"tmux"}, args...)
+
+	// Replace current process with tmux
+	err = syscall.Exec(tmuxPath, execArgs, os.Environ())
+	if err != nil {
+		return errors.Wrap(err, "failed to exec tmux")
+	}
+
+	// This line should never be reached
 	return nil
 }
