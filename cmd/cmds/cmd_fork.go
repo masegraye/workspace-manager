@@ -7,12 +7,14 @@ import (
 	"strings"
 
 	"github.com/go-go-golems/workspace-manager/pkg/output"
-	"github.com/go-go-golems/workspace-manager/pkg/wsm"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm/domain"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm/service"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm/ux"
 	"github.com/pkg/errors"
-	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
 
+// NewForkCommand creates the service-based fork command
 func NewForkCommand() *cobra.Command {
 	var (
 		branch       string
@@ -36,16 +38,16 @@ the new workspace's branch.
 
 Examples:
   # Fork current workspace to create "my-feature"
-  workspace-manager fork my-feature
+  wsm fork my-feature
 
   # Fork a specific workspace
-  workspace-manager fork my-feature source-workspace
+  wsm fork my-feature source-workspace
 
   # Fork with custom branch name
-  workspace-manager fork my-feature --branch feature/new-api
+  wsm fork my-feature --branch feature/new-api
 
   # Fork with custom branch prefix (bug/my-feature)
-  workspace-manager fork my-feature --branch-prefix bug`,
+  wsm fork my-feature --branch-prefix bug`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			newWorkspaceName := args[0]
@@ -67,10 +69,9 @@ Examples:
 }
 
 func runFork(ctx context.Context, newWorkspaceName, sourceWorkspaceName, branch, branchPrefix, agentSource string, dryRun bool) error {
-	wm, err := wsm.NewWorkspaceManager()
-	if err != nil {
-		return errors.Wrap(err, "failed to create workspace manager")
-	}
+	// Initialize the new service architecture
+	deps := service.NewDeps()
+	workspaceService := service.NewWorkspaceService(deps)
 
 	// If no source workspace specified, try to detect current workspace
 	if sourceWorkspaceName == "" {
@@ -79,120 +80,130 @@ func runFork(ctx context.Context, newWorkspaceName, sourceWorkspaceName, branch,
 			return errors.Wrap(err, "failed to get current directory")
 		}
 
-		detected, err := detectWorkspace(cwd)
+		detected, err := workspaceService.DetectWorkspace(cwd)
 		if err != nil {
-			return errors.Wrap(err, "failed to detect workspace. Use 'workspace-manager fork <new-name> <source-workspace>' or specify --workspace flag")
+			return errors.Wrap(err, "failed to detect workspace. Use 'wsm fork <new-name> <source-workspace>' or specify --workspace flag")
 		}
 		sourceWorkspaceName = detected
 	}
 
-	// Load source workspace
-	sourceWorkspace, err := loadWorkspace(sourceWorkspaceName)
-	if err != nil {
-		return errors.Wrapf(err, "failed to load source workspace '%s'", sourceWorkspaceName)
-	}
+	// Fork the workspace using the new service
+	deps.Logger.Info("Forking workspace",
+		ux.Field("source", sourceWorkspaceName),
+		ux.Field("new", newWorkspaceName),
+		ux.Field("branch", branch),
+		ux.Field("branchPrefix", branchPrefix),
+		ux.Field("dryRun", dryRun))
 
-	output.PrintInfo("Forking workspace '%s' to create '%s'", sourceWorkspace.Name, newWorkspaceName)
+	workspace, err := workspaceService.ForkWorkspace(ctx, service.ForkRequest{
+		NewWorkspaceName:    newWorkspaceName,
+		SourceWorkspaceName: sourceWorkspaceName,
+		Branch:              branch,
+		BranchPrefix:        branchPrefix,
+		AgentSource:         agentSource,
+		DryRun:              dryRun,
+	})
 
-	// Get current branch status of source workspace to use as base branch
-	checker := wsm.NewStatusChecker()
-	status, err := checker.GetWorkspaceStatus(ctx, sourceWorkspace)
-	if err != nil {
-		return errors.Wrap(err, "failed to get source workspace status")
-	}
-
-	// Determine the base branch from the source workspace
-	// Use the first repository's current branch as the base
-	var baseBranch string
-	if len(status.Repositories) > 0 {
-		baseBranch = status.Repositories[0].CurrentBranch
-		output.PrintInfo("Using base branch: %s", baseBranch)
-	}
-
-	// Validate that all repositories are on the same branch
-	for _, repoStatus := range status.Repositories {
-		if repoStatus.CurrentBranch != baseBranch {
-			return errors.Errorf("repositories in source workspace are on different branches: %s is on %s, but expected %s",
-				repoStatus.Repository.Name, repoStatus.CurrentBranch, baseBranch)
-		}
-	}
-
-	// Generate branch name if not specified
-	finalBranch := branch
-	if finalBranch == "" {
-		finalBranch = fmt.Sprintf("%s/%s", branchPrefix, newWorkspaceName)
-		output.PrintInfo("Using auto-generated branch: %s", finalBranch)
-		log.Debug().Str("branch", finalBranch).Str("prefix", branchPrefix).Str("name", newWorkspaceName).Msg("Generated branch name")
-	}
-
-	// Extract repository names from source workspace
-	var repoNames []string
-	for _, repo := range sourceWorkspace.Repositories {
-		repoNames = append(repoNames, repo.Name)
-	}
-
-	// Use the source workspace's agent MD if no custom one specified
-	finalAgentSource := agentSource
-	if finalAgentSource == "" && sourceWorkspace.AgentMD != "" {
-		finalAgentSource = sourceWorkspace.AgentMD
-		output.PrintInfo("Using AGENT.md from source workspace: %s", finalAgentSource)
-	}
-
-	// Create the new workspace
-	log.Debug().
-		Str("newName", newWorkspaceName).
-		Str("sourceName", sourceWorkspace.Name).
-		Strs("repos", repoNames).
-		Str("branch", finalBranch).
-		Str("baseBranch", baseBranch).
-		Bool("dryRun", dryRun).
-		Msg("Forking workspace")
-
-	workspace, err := wm.CreateWorkspace(ctx, newWorkspaceName, repoNames, finalBranch, baseBranch, finalAgentSource, dryRun)
 	if err != nil {
 		// Check if user cancelled - handle gracefully without error
 		errMsg := strings.ToLower(err.Error())
-		if strings.Contains(errMsg, "cancelled by user") ||
-			strings.Contains(errMsg, "creation cancelled") ||
-			strings.Contains(errMsg, "operation cancelled") {
-			output.PrintInfo("Operation cancelled.")
-			return nil // Return success to prevent usage help
+		if strings.Contains(errMsg, "cancelled") || strings.Contains(errMsg, "interrupt") {
+			deps.Logger.Info("Operation cancelled by user")
+			return nil
 		}
 		return errors.Wrap(err, "failed to fork workspace")
 	}
 
 	// Show results
 	if dryRun {
-		output.PrintHeader("📋 Fork Preview: %s → %s", sourceWorkspace.Name, workspace.Name)
-		fmt.Println()
-		output.PrintInfo("Source workspace:")
-		fmt.Printf("  Name: %s\n", sourceWorkspace.Name)
-		fmt.Printf("  Path: %s\n", sourceWorkspace.Path)
-		fmt.Printf("  Current branch: %s\n", baseBranch)
-		fmt.Println()
-		return showWorkspacePreview(workspace)
+		return showForkPreview(*workspace, sourceWorkspaceName, deps.Logger)
 	}
 
-	output.PrintSuccess("Workspace '%s' forked successfully from '%s'!", workspace.Name, sourceWorkspace.Name)
+	// Success output
+	output.PrintSuccess("Workspace '%s' forked successfully from '%s'!", workspace.Name, sourceWorkspaceName)
 	fmt.Println()
 
 	output.PrintHeader("Fork Details")
-	fmt.Printf("  Source: %s (branch: %s)\n", sourceWorkspace.Name, baseBranch)
+	fmt.Printf("  Source: %s (branch: %s)\n", sourceWorkspaceName, workspace.BaseBranch)
 	fmt.Printf("  New workspace: %s\n", workspace.Name)
 	fmt.Printf("  Path: %s\n", workspace.Path)
-	fmt.Printf("  Repositories: %s\n", strings.Join(getRepositoryNames(workspace.Repositories), ", "))
+
+	repoNames := make([]string, len(workspace.Repositories))
+	for i, repo := range workspace.Repositories {
+		repoNames[i] = repo.Name
+	}
+	fmt.Printf("  Repositories: %s\n", strings.Join(repoNames, ", "))
+
 	fmt.Printf("  New branch: %s\n", workspace.Branch)
 	fmt.Printf("  Base branch: %s\n", workspace.BaseBranch)
 	if workspace.GoWorkspace {
 		fmt.Printf("  Go workspace: yes (go.work created)\n")
 	}
 	if workspace.AgentMD != "" {
-		fmt.Printf("  AGENT.md: copied from %s\n", workspace.AgentMD)
+		fmt.Printf("  AGENT.md: copied from source workspace\n")
 	}
 
 	fmt.Println()
 	output.PrintInfo("To start working:")
 	fmt.Printf("  cd %s\n", workspace.Path)
+
+	deps.Logger.Info("Workspace fork completed successfully",
+		ux.Field("source", sourceWorkspaceName),
+		ux.Field("new", workspace.Name),
+		ux.Field("path", workspace.Path))
+
+	return nil
+}
+
+func showForkPreview(workspace domain.Workspace, sourceWorkspaceName string, logger ux.Logger) error {
+	output.PrintHeader("📋 Fork Preview: %s → %s", sourceWorkspaceName, workspace.Name)
+	fmt.Println()
+
+	fmt.Printf("  Source workspace: %s\n", sourceWorkspaceName)
+	fmt.Printf("  New workspace: %s\n", workspace.Name)
+	fmt.Printf("  Path: %s\n", workspace.Path)
+
+	repoNames := make([]string, len(workspace.Repositories))
+	for i, repo := range workspace.Repositories {
+		repoNames[i] = repo.Name
+	}
+	fmt.Printf("  Repositories: %s\n", strings.Join(repoNames, ", "))
+
+	if workspace.Branch != "" {
+		fmt.Printf("  New branch: %s\n", workspace.Branch)
+	}
+	if workspace.BaseBranch != "" {
+		fmt.Printf("  Base branch: %s\n", workspace.BaseBranch)
+	}
+	if workspace.GoWorkspace {
+		fmt.Printf("  Go workspace: yes (go.work would be created)\n")
+	}
+	if workspace.AgentMD != "" {
+		fmt.Printf("  AGENT.md: would be copied from source workspace\n")
+	}
+
+	fmt.Println()
+	output.PrintInfo("Files that would be created:")
+
+	// Show metadata file
+	fmt.Printf("  %s\n", workspace.MetadataPath())
+
+	// Show go.work if applicable
+	if workspace.GoWorkspace {
+		fmt.Printf("  %s\n", workspace.GoWorkPath())
+	}
+
+	// Show AGENT.md if applicable
+	if workspace.AgentMD != "" {
+		fmt.Printf("  %s\n", workspace.AgentMDPath())
+	}
+
+	// Show worktree paths
+	fmt.Println()
+	output.PrintInfo("Worktrees that would be created:")
+	for _, repo := range workspace.Repositories {
+		fmt.Printf("  %s -> %s\n", repo.Name, workspace.RepositoryWorktreePath(repo.Name))
+	}
 
 	return nil
 }

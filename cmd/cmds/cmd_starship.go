@@ -1,23 +1,24 @@
 package cmds
 
 import (
+	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm/service"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm/ux"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
-// NewStarshipCommand creates the starship command
 func NewStarshipCommand() *cobra.Command {
-	var symbol string
-	var style string
-	var showDate bool
-	var force bool
+	var (
+		symbol   string
+		style    string
+		showDate bool
+		force    bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "starship",
@@ -32,18 +33,18 @@ The configuration adds a custom module that:
 
 Examples:
   # Generate default configuration
-  workspace-manager starship
+  wsm starship
 
   # Customize the symbol and color
-  workspace-manager starship --symbol "⚡" --style "bold fg:#00ff00"
+  wsm starship --symbol "⚡" --style "bold fg:#00ff00"
 
   # Include date in the display
-  workspace-manager starship --show-date
+  wsm starship --show-date
 
   # Force append without confirmation
-  workspace-manager starship --force`,
+  wsm starship --force`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStarshipCommand(symbol, style, showDate, force)
+			return runStarshipCommandV2(cmd.Context(), symbol, style, showDate, force)
 		},
 	}
 
@@ -55,21 +56,35 @@ Examples:
 	return cmd
 }
 
-func runStarshipCommand(symbol, style string, showDate, force bool) error {
-	// Generate the configuration
-	config := generateStarshipConfig(symbol, style, showDate)
+func runStarshipCommandV2(ctx context.Context, symbol, style string, showDate, force bool) error {
+	// Initialize the new service architecture
+	deps := service.NewDeps()
+	workspaceService := service.NewWorkspaceService(deps)
+
+	deps.Logger.Info("Generating starship configuration",
+		ux.Field("symbol", symbol),
+		ux.Field("style", style),
+		ux.Field("show_date", showDate),
+		ux.Field("force", force))
+
+	// Generate the configuration using the service
+	starshipReq := service.StarshipRequest{
+		Symbol:   symbol,
+		Style:    style,
+		ShowDate: showDate,
+		Force:    force,
+	}
+
+	response, err := workspaceService.GenerateStarshipConfig(ctx, starshipReq)
+	if err != nil {
+		return errors.Wrap(err, "failed to generate starship configuration")
+	}
 
 	// Print the configuration
 	fmt.Println("Generated starship configuration:")
 	fmt.Println()
-	fmt.Println(config)
+	fmt.Println(response.Config)
 	fmt.Println()
-
-	// Get the starship config path
-	configPath, err := getStarshipConfigPath()
-	if err != nil {
-		return errors.Wrap(err, "failed to determine starship config path")
-	}
 
 	// Ask for confirmation unless forced
 	if !force {
@@ -77,7 +92,7 @@ func runStarshipCommand(symbol, style string, showDate, force bool) error {
 		form := huh.NewForm(
 			huh.NewGroup(
 				huh.NewConfirm().
-					Title(fmt.Sprintf("Append this configuration to %s?", configPath)).
+					Title(fmt.Sprintf("Append this configuration to %s?", response.ConfigPath)).
 					Description("This will add the workspace module to your starship configuration.").
 					Value(&confirmed),
 			),
@@ -102,96 +117,12 @@ func runStarshipCommand(symbol, style string, showDate, force bool) error {
 		}
 	}
 
-	// Append to the config file
-	err = appendToStarshipConfig(configPath, config)
+	// Apply configuration using the service
+	err = workspaceService.ApplyStarshipConfig(ctx, response.ConfigPath, response.Config)
 	if err != nil {
-		return errors.Wrap(err, "failed to append configuration")
+		return errors.Wrap(err, "failed to apply starship configuration")
 	}
 
-	fmt.Printf("✓ Configuration appended to %s\n", configPath)
-	return nil
-}
-
-func generateStarshipConfig(symbol, style string, showDate bool) string {
-	var command string
-	if showDate {
-		command = `printf "%s\n" "$PWD" \
-  | sed -E 's|.*/workspaces/([0-9]{4}-[0-9]{2}-[0-9]{2})/([^/]+).*|\2 (\1)|'`
-	} else {
-		command = `printf "%s\n" "$PWD" \
-  | sed -E 's|.*/workspaces/[0-9]{4}-[0-9]{2}-[0-9]{2}/([^/]+).*|\1|'`
-	}
-
-	return fmt.Sprintf(`[custom.workspace]
-description = "Show current workspaces/YYYY-MM-DD/<name>"
-when   = 'echo "$PWD" | grep -Eq "/workspaces/[0-9]{4}-[0-9]{2}-[0-9]{2}/"'
-command = '''
-  %s
-'''
-symbol  = "%s"
-style   = "%s"
-format  = '[ $symbol$output ]($style)'`, command, symbol, style)
-}
-
-func getStarshipConfigPath() (string, error) {
-	var configPath string
-
-	if runtime.GOOS == "darwin" {
-		// macOS
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		configPath = filepath.Join(homeDir, ".config", "starship.toml")
-	} else {
-		// Linux and others
-		if xdgConfig := os.Getenv("XDG_CONFIG_HOME"); xdgConfig != "" {
-			configPath = filepath.Join(xdgConfig, "starship.toml")
-		} else {
-			homeDir, err := os.UserHomeDir()
-			if err != nil {
-				return "", err
-			}
-			configPath = filepath.Join(homeDir, ".config", "starship.toml")
-		}
-	}
-
-	return configPath, nil
-}
-
-func appendToStarshipConfig(configPath, config string) error {
-	// Create the config directory if it doesn't exist
-	configDir := filepath.Dir(configPath)
-	err := os.MkdirAll(configDir, 0755)
-	if err != nil {
-		return errors.Wrap(err, "failed to create config directory")
-	}
-
-	// Open file for appending, create if it doesn't exist
-	file, err := os.OpenFile(configPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return errors.Wrap(err, "failed to open config file")
-	}
-	defer file.Close()
-
-	// Add a newline before the config if the file exists and is not empty
-	stat, err := file.Stat()
-	if err != nil {
-		return errors.Wrap(err, "failed to get file stats")
-	}
-
-	if stat.Size() > 0 {
-		_, err = file.WriteString("\n\n")
-		if err != nil {
-			return errors.Wrap(err, "failed to write newline")
-		}
-	}
-
-	// Write the configuration
-	_, err = file.WriteString(config + "\n")
-	if err != nil {
-		return errors.Wrap(err, "failed to write configuration")
-	}
-
+	fmt.Printf("✓ Configuration appended to %s\n", response.ConfigPath)
 	return nil
 }

@@ -57,44 +57,24 @@ func init() {
 	// Add all subcommands
 	rootCmd.AddCommand(
 		cmds.NewDiscoverCommand(),
-		cmds.NewDiscoverCommandV2(), // New service-based implementation
 		cmds.NewListCommand(),
-		cmds.NewListCommandV2(), // New service-based implementation
 		cmds.NewCreateCommand(),
-		cmds.NewCreateCommandV2(), // New service-based implementation
 		cmds.NewForkCommand(),
-		cmds.NewForkCommandV2(), // New service-based implementation
-		cmds.NewMergeCommand(),
-		cmds.NewMergeCommandV2(), // New service-based implementation
-		cmds.NewAddCommand(),
-		cmds.NewAddCommandV2(), // New service-based implementation
-		cmds.NewRemoveCommand(),
-		cmds.NewRemoveCommandV2(), // New service-based implementation
 		cmds.NewDeleteCommand(),
-		cmds.NewDeleteCommandV2(), // New service-based implementation
+		cmds.NewMergeCommand(),
+		cmds.NewAddCommand(),
+		cmds.NewRemoveCommand(),
 		cmds.NewInfoCommand(),
-		cmds.NewInfoCommandV2(), // New service-based implementation
 		cmds.NewStatusCommand(),
-		cmds.NewStatusCommandV2(), // New service-based implementation
 		cmds.NewPRCommand(),
 		cmds.NewPushCommand(),
-		cmds.NewPushCommandV2(), // New service-based implementation
-
 		cmds.NewCommitCommand(),
-		cmds.NewCommitCommandV2(), // New service-based implementation
 		cmds.NewSyncCommand(),
-		cmds.NewSyncCommandV2(), // New service-based implementation
 		cmds.NewBranchCommand(),
-		cmds.NewBranchCommandV2(), // New service-based implementation
 		cmds.NewRebaseCommand(),
-		cmds.NewRebaseCommandV2(), // New service-based implementation
 		cmds.NewDiffCommand(),
-		cmds.NewDiffCommandV2(), // New service-based implementation
-		cmds.NewLogCommand(),
 		cmds.NewTmuxCommand(),
-		cmds.NewTmuxCommandV2(), // New service-based implementation
 		cmds.NewStarshipCommand(),
-		cmds.NewStarshipCommandV2(), // New service-based implementation
 	)
 
 	carapace.Gen(rootCmd)
