@@ -27,9 +27,18 @@ type Client interface {
 	// Operations
 	Add(ctx context.Context, repoPath, filePath string) error
 	Commit(ctx context.Context, repoPath, message string) error
-	Push(ctx context.Context, repoPath string) error
-	Pull(ctx context.Context, repoPath string, rebase bool) error
-	Fetch(ctx context.Context, repoPath string) error
+	Push(ctx context.Context, repoPath, remote, branch string) error
+	Pull(ctx context.Context, repoPath, remote, branch string) error
+	Fetch(ctx context.Context, repoPath, remote string) error
+	Checkout(ctx context.Context, repoPath, branch string) error
+	Merge(ctx context.Context, repoPath, branch string) error
+	ResetHard(ctx context.Context, repoPath, ref string) error
+
+	// Rebase operations
+	Rebase(ctx context.Context, repoPath, targetBranch string, interactive bool) error
+	GetCommitsAhead(ctx context.Context, repoPath, targetBranch string) (int, error)
+	HasRebaseConflicts(ctx context.Context, repoPath string) (bool, error)
+	FetchBranch(ctx context.Context, repoPath, branch string) error
 
 	// Repository info
 	RemoteURL(ctx context.Context, repoPath string) (string, error)

@@ -3,7 +3,9 @@ package git
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -155,20 +157,46 @@ func (c *ExecClient) Commit(ctx context.Context, repoPath, message string) error
 	return c.runInRepo(ctx, repoPath, "git", "commit", "-m", message)
 }
 
-func (c *ExecClient) Push(ctx context.Context, repoPath string) error {
-	return c.runInRepo(ctx, repoPath, "git", "push")
-}
-
-func (c *ExecClient) Pull(ctx context.Context, repoPath string, rebase bool) error {
-	args := []string{"pull"}
-	if rebase {
-		args = append(args, "--rebase")
+func (c *ExecClient) Push(ctx context.Context, repoPath, remote, branch string) error {
+	args := []string{"push"}
+	if remote != "" {
+		args = append(args, remote)
+	}
+	if branch != "" {
+		args = append(args, branch)
 	}
 	return c.runInRepo(ctx, repoPath, "git", args...)
 }
 
-func (c *ExecClient) Fetch(ctx context.Context, repoPath string) error {
-	return c.runInRepo(ctx, repoPath, "git", "fetch")
+func (c *ExecClient) Pull(ctx context.Context, repoPath, remote, branch string) error {
+	args := []string{"pull"}
+	if remote != "" {
+		args = append(args, remote)
+	}
+	if branch != "" {
+		args = append(args, branch)
+	}
+	return c.runInRepo(ctx, repoPath, "git", args...)
+}
+
+func (c *ExecClient) Fetch(ctx context.Context, repoPath, remote string) error {
+	args := []string{"fetch"}
+	if remote != "" {
+		args = append(args, remote)
+	}
+	return c.runInRepo(ctx, repoPath, "git", args...)
+}
+
+func (c *ExecClient) Checkout(ctx context.Context, repoPath, branch string) error {
+	return c.runInRepo(ctx, repoPath, "git", "checkout", branch)
+}
+
+func (c *ExecClient) Merge(ctx context.Context, repoPath, branch string) error {
+	return c.runInRepo(ctx, repoPath, "git", "merge", branch)
+}
+
+func (c *ExecClient) ResetHard(ctx context.Context, repoPath, ref string) error {
+	return c.runInRepo(ctx, repoPath, "git", "reset", "--hard", ref)
 }
 
 func (c *ExecClient) RemoteURL(ctx context.Context, repoPath string) (string, error) {
@@ -315,6 +343,65 @@ func (c *ExecClient) parseStatus(output string) *StatusInfo {
 	}
 
 	return status
+}
+
+// Rebase operations
+func (c *ExecClient) Rebase(ctx context.Context, repoPath, targetBranch string, interactive bool) error {
+	args := []string{"rebase"}
+	if interactive {
+		args = append(args, "-i")
+	}
+	args = append(args, targetBranch)
+
+	return c.runInRepo(ctx, repoPath, "git", args...)
+}
+
+func (c *ExecClient) GetCommitsAhead(ctx context.Context, repoPath, targetBranch string) (int, error) {
+	output, err := c.runInRepoWithOutput(ctx, repoPath, "git", "rev-list", "--count", fmt.Sprintf("HEAD..%s", targetBranch))
+	if err != nil {
+		return 0, err
+	}
+
+	count, err := strconv.Atoi(strings.TrimSpace(output))
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse commit count: %w", err)
+	}
+
+	return count, nil
+}
+
+func (c *ExecClient) HasRebaseConflicts(ctx context.Context, repoPath string) (bool, error) {
+	// Check git status for conflict markers
+	output, err := c.runInRepoWithOutput(ctx, repoPath, "git", "status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		if len(line) >= 2 && (line[0] == 'U' || line[1] == 'U' ||
+			(line[0] == 'A' && line[1] == 'A') ||
+			(line[0] == 'D' && line[1] == 'D')) {
+			return true, nil
+		}
+	}
+
+	// Check for rebase directories
+	rebaseMergePath := filepath.Join(repoPath, ".git", "rebase-merge")
+	rebaseApplyPath := filepath.Join(repoPath, ".git", "rebase-apply")
+
+	if _, err := os.Stat(rebaseMergePath); err == nil {
+		return true, nil
+	}
+	if _, err := os.Stat(rebaseApplyPath); err == nil {
+		return true, nil
+	}
+
+	return false, nil
+}
+
+func (c *ExecClient) FetchBranch(ctx context.Context, repoPath, branch string) error {
+	return c.runInRepo(ctx, repoPath, "git", "fetch", "origin", fmt.Sprintf("%s:%s", branch, branch))
 }
 
 func isExitError(err error) bool {

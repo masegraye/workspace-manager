@@ -80,7 +80,7 @@ func (s *Service) PullRepository(ctx context.Context, repoPath string, rebase bo
 		ux.Field("path", repoPath),
 		ux.Field("rebase", rebase))
 
-	if err := s.git.Pull(ctx, repoPath, rebase); err != nil {
+	if err := s.git.Pull(ctx, repoPath, "origin", ""); err != nil {
 		s.logger.Error("Failed to pull repository",
 			ux.Field("path", repoPath),
 			ux.Field("error", err))
@@ -94,7 +94,7 @@ func (s *Service) PullRepository(ctx context.Context, repoPath string, rebase bo
 func (s *Service) PushRepository(ctx context.Context, repoPath string) error {
 	s.logger.Info("Pushing repository", ux.Field("path", repoPath))
 
-	if err := s.git.Push(ctx, repoPath); err != nil {
+	if err := s.git.Push(ctx, repoPath, "origin", ""); err != nil {
 		s.logger.Error("Failed to push repository",
 			ux.Field("path", repoPath),
 			ux.Field("error", err))
@@ -108,7 +108,7 @@ func (s *Service) PushRepository(ctx context.Context, repoPath string) error {
 func (s *Service) FetchRepository(ctx context.Context, repoPath string) error {
 	s.logger.Info("Fetching repository", ux.Field("path", repoPath))
 
-	if err := s.git.Fetch(ctx, repoPath); err != nil {
+	if err := s.git.Fetch(ctx, repoPath, "origin"); err != nil {
 		s.logger.Error("Failed to fetch repository",
 			ux.Field("path", repoPath),
 			ux.Field("error", err))
@@ -135,6 +135,144 @@ func (s *Service) FetchWorkspace(ctx context.Context, workspace domain.Workspace
 
 	s.logger.Info("Workspace fetch completed", ux.Field("workspace", workspace.Name))
 	return nil
+}
+
+// BranchResult represents the result of a branch operation on a repository
+type BranchResult struct {
+	Repository string `json:"repository"`
+	Success    bool   `json:"success"`
+	Error      string `json:"error,omitempty"`
+	Branch     string `json:"branch"`
+}
+
+// CreateBranchWorkspace creates a branch in all repositories in the workspace
+func (s *Service) CreateBranchWorkspace(ctx context.Context, workspace domain.Workspace, branchName string, track bool) ([]BranchResult, error) {
+	s.logger.Info("Creating branch across workspace",
+		ux.Field("workspace", workspace.Name),
+		ux.Field("branch", branchName),
+		ux.Field("track", track))
+
+	var results []BranchResult
+
+	for _, repo := range workspace.Repositories {
+		repoPath := workspace.RepositoryWorktreePath(repo.Name)
+		result := s.createBranchInRepository(ctx, repo.Name, repoPath, branchName, track)
+		results = append(results, result)
+	}
+
+	s.logger.Info("Branch creation completed",
+		ux.Field("workspace", workspace.Name),
+		ux.Field("branch", branchName),
+		ux.Field("repositories", len(results)))
+
+	return results, nil
+}
+
+// SwitchBranchWorkspace switches to a branch in all repositories in the workspace
+func (s *Service) SwitchBranchWorkspace(ctx context.Context, workspace domain.Workspace, branchName string) ([]BranchResult, error) {
+	s.logger.Info("Switching branch across workspace",
+		ux.Field("workspace", workspace.Name),
+		ux.Field("branch", branchName))
+
+	var results []BranchResult
+
+	for _, repo := range workspace.Repositories {
+		repoPath := workspace.RepositoryWorktreePath(repo.Name)
+		result := s.switchBranchInRepository(ctx, repo.Name, repoPath, branchName)
+		results = append(results, result)
+	}
+
+	s.logger.Info("Branch switch completed",
+		ux.Field("workspace", workspace.Name),
+		ux.Field("branch", branchName),
+		ux.Field("repositories", len(results)))
+
+	return results, nil
+}
+
+// ListBranchesWorkspace lists current branches across all repositories in the workspace
+func (s *Service) ListBranchesWorkspace(ctx context.Context, workspace domain.Workspace) ([]BranchResult, error) {
+	s.logger.Info("Listing branches across workspace", ux.Field("workspace", workspace.Name))
+
+	var results []BranchResult
+
+	for _, repo := range workspace.Repositories {
+		repoPath := workspace.RepositoryWorktreePath(repo.Name)
+		result := s.getCurrentBranchInRepository(ctx, repo.Name, repoPath)
+		results = append(results, result)
+	}
+
+	return results, nil
+}
+
+// Helper functions
+
+func (s *Service) createBranchInRepository(ctx context.Context, repoName, repoPath, branchName string, track bool) BranchResult {
+	result := BranchResult{
+		Repository: repoName,
+		Branch:     branchName,
+		Success:    true,
+	}
+
+	if err := s.git.CreateBranch(ctx, repoPath, branchName, track); err != nil {
+		s.logger.Error("Failed to create branch",
+			ux.Field("repo", repoName),
+			ux.Field("branch", branchName),
+			ux.Field("error", err))
+		result.Success = false
+		result.Error = err.Error()
+		return result
+	}
+
+	s.logger.Debug("Branch created successfully",
+		ux.Field("repo", repoName),
+		ux.Field("branch", branchName))
+
+	return result
+}
+
+func (s *Service) switchBranchInRepository(ctx context.Context, repoName, repoPath, branchName string) BranchResult {
+	result := BranchResult{
+		Repository: repoName,
+		Branch:     branchName,
+		Success:    true,
+	}
+
+	if err := s.git.SwitchBranch(ctx, repoPath, branchName); err != nil {
+		s.logger.Error("Failed to switch branch",
+			ux.Field("repo", repoName),
+			ux.Field("branch", branchName),
+			ux.Field("error", err))
+		result.Success = false
+		result.Error = err.Error()
+		return result
+	}
+
+	s.logger.Debug("Branch switched successfully",
+		ux.Field("repo", repoName),
+		ux.Field("branch", branchName))
+
+	return result
+}
+
+func (s *Service) getCurrentBranchInRepository(ctx context.Context, repoName, repoPath string) BranchResult {
+	result := BranchResult{
+		Repository: repoName,
+		Success:    true,
+	}
+
+	branch, err := s.git.CurrentBranch(ctx, repoPath)
+	if err != nil {
+		s.logger.Error("Failed to get current branch",
+			ux.Field("repo", repoName),
+			ux.Field("error", err))
+		result.Success = false
+		result.Error = err.Error()
+		return result
+	}
+
+	result.Branch = branch
+	return result
 }
 
 // syncRepository synchronizes a single repository (internal implementation)
@@ -169,7 +307,7 @@ func (s *Service) syncRepository(ctx context.Context, repoName, repoPath string,
 
 	// Pull changes if requested
 	if options.Pull {
-		if err := s.git.Pull(ctx, repoPath, options.Rebase); err != nil {
+		if err := s.git.Pull(ctx, repoPath, "origin", ""); err != nil {
 			s.logger.Error("Pull failed",
 				ux.Field("repo", repoName),
 				ux.Field("error", err))
@@ -188,7 +326,7 @@ func (s *Service) syncRepository(ctx context.Context, repoName, repoPath string,
 
 	// Push changes if requested
 	if options.Push {
-		if err := s.git.Push(ctx, repoPath); err != nil {
+		if err := s.git.Push(ctx, repoPath, "origin", ""); err != nil {
 			s.logger.Error("Push failed",
 				ux.Field("repo", repoName),
 				ux.Field("error", err))

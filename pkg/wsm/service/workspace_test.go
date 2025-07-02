@@ -141,6 +141,14 @@ func (m *MockGitClient) CurrentBranch(ctx context.Context, repoPath string) (str
 	return "main", nil
 }
 
+func (m *MockGitClient) CreateBranch(ctx context.Context, repoPath, branchName string, track bool) error {
+	return nil
+}
+
+func (m *MockGitClient) SwitchBranch(ctx context.Context, repoPath, branchName string) error {
+	return nil
+}
+
 func (m *MockGitClient) Status(ctx context.Context, repoPath string) (*git.StatusInfo, error) {
 	return &git.StatusInfo{Clean: true}, nil
 }
@@ -165,15 +173,15 @@ func (m *MockGitClient) Commit(ctx context.Context, repoPath, message string) er
 	return nil
 }
 
-func (m *MockGitClient) Push(ctx context.Context, repoPath string) error {
+func (m *MockGitClient) Push(ctx context.Context, repoPath, remote, branch string) error {
 	return nil
 }
 
-func (m *MockGitClient) Pull(ctx context.Context, repoPath string, rebase bool) error {
+func (m *MockGitClient) Pull(ctx context.Context, repoPath, remote, branch string) error {
 	return nil
 }
 
-func (m *MockGitClient) Fetch(ctx context.Context, repoPath string) error {
+func (m *MockGitClient) Fetch(ctx context.Context, repoPath, remote string) error {
 	return nil
 }
 
@@ -198,6 +206,34 @@ func (m *MockGitClient) IsRepository(ctx context.Context, path string) (bool, er
 		return result, nil
 	}
 	return true, nil // Default behavior
+}
+
+func (m *MockGitClient) Checkout(ctx context.Context, repoPath, branch string) error {
+	return nil
+}
+
+func (m *MockGitClient) Merge(ctx context.Context, repoPath, branch string) error {
+	return nil
+}
+
+func (m *MockGitClient) ResetHard(ctx context.Context, repoPath, ref string) error {
+	return nil
+}
+
+func (m *MockGitClient) Rebase(ctx context.Context, repoPath, targetBranch string, interactive bool) error {
+	return nil
+}
+
+func (m *MockGitClient) GetCommitsAhead(ctx context.Context, repoPath, targetBranch string) (int, error) {
+	return 0, nil
+}
+
+func (m *MockGitClient) HasRebaseConflicts(ctx context.Context, repoPath string) (bool, error) {
+	return false, nil
+}
+
+func (m *MockGitClient) FetchBranch(ctx context.Context, repoPath, branch string) error {
+	return nil
 }
 
 // MockLogger implements ux.Logger for testing
