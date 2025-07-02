@@ -7,6 +7,12 @@ type Prompter interface {
 	Input(message string) (string, error)
 }
 
+// MultiSelectPrompter extends Prompter with multi-selection capability
+type MultiSelectPrompter interface {
+	Prompter
+	MultiSelect(message string, options []string) ([]string, error)
+}
+
 // Logger abstracts logging for structured output and testing
 type Logger interface {
 	Info(msg string, fields ...LogField)

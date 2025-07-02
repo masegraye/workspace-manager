@@ -19,11 +19,12 @@ type Deps struct {
 
 // NewDeps creates a new dependencies container with production implementations
 func NewDeps() *Deps {
+	huhPrompter := ux.NewHuhPrompter()
 	return &Deps{
 		FS:       fs.NewOSFileSystem(),
 		Git:      git.NewExecClient(),
-		Prompter: ux.NewStdPrompter(),
-		Logger:   ux.NewStdLogger(),
+		Prompter: huhPrompter, // HuhPrompter implements both Prompter and MultiSelectPrompter
+		Logger:   ux.NewZerologLogger(),
 		Clock:    time.Now,
 	}
 }

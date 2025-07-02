@@ -57,8 +57,10 @@ func init() {
 	// Add all subcommands
 	rootCmd.AddCommand(
 		cmds.NewDiscoverCommand(),
+		cmds.NewDiscoverCommandV2(), // New service-based implementation
 		cmds.NewListCommand(),
 		cmds.NewCreateCommand(),
+		cmds.NewCreateCommandV2(), // New service-based implementation
 		cmds.NewForkCommand(),
 		cmds.NewMergeCommand(),
 		cmds.NewAddCommand(),
@@ -66,11 +68,13 @@ func init() {
 		cmds.NewDeleteCommand(),
 		cmds.NewInfoCommand(),
 		cmds.NewStatusCommand(),
+		cmds.NewStatusCommandV2(), // New service-based implementation
 		cmds.NewPRCommand(),
 		cmds.NewPushCommand(),
 
 		cmds.NewCommitCommand(),
 		cmds.NewSyncCommand(),
+		cmds.NewSyncCommandV2(), // New service-based implementation
 		cmds.NewBranchCommand(),
 		cmds.NewRebaseCommand(),
 		cmds.NewDiffCommand(),
