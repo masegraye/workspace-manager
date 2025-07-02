@@ -179,7 +179,7 @@ func appendToStarshipConfig(configPath, config string) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to get file stats")
 	}
-	
+
 	if stat.Size() > 0 {
 		_, err = file.WriteString("\n\n")
 		if err != nil {

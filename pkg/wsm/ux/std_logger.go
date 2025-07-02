@@ -33,11 +33,11 @@ func (l *StdLogger) formatFields(fields []LogField) string {
 	if len(fields) == 0 {
 		return ""
 	}
-	
+
 	var parts []string
 	for _, field := range fields {
 		parts = append(parts, fmt.Sprintf("%s=%v", field.Key, field.Value))
 	}
-	
+
 	return " [" + strings.Join(parts, " ") + "]"
 }

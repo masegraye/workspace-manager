@@ -80,7 +80,7 @@ func runDiscoverV2(ctx context.Context, paths []string, recursive bool, maxDepth
 	}
 
 	// Discover repositories using the new service
-	deps.Logger.Info("Starting repository discovery", 
+	deps.Logger.Info("Starting repository discovery",
 		ux.Field("paths", expandedPaths),
 		ux.Field("recursive", recursive),
 		ux.Field("maxDepth", maxDepth))
@@ -106,12 +106,12 @@ func runDiscoverV2(ctx context.Context, paths []string, recursive bool, maxDepth
 		} else {
 			displayRepositoriesSummary(repos)
 		}
-		
+
 		fmt.Println()
 		output.PrintInfo("Use 'wsm list repos' to see all repositories, or 'wsm create-v2 <name> --interactive' to create workspaces")
 	}
 
-	deps.Logger.Info("Repository discovery completed", 
+	deps.Logger.Info("Repository discovery completed",
 		ux.Field("totalRepositories", len(repos)))
 
 	return nil
@@ -119,7 +119,7 @@ func runDiscoverV2(ctx context.Context, paths []string, recursive bool, maxDepth
 
 func expandAndValidatePaths(paths []string, deps *service.Deps) ([]string, error) {
 	var expandedPaths []string
-	
+
 	for _, path := range paths {
 		// Expand ~ to home directory
 		if len(path) > 0 && path[0] == '~' {
@@ -147,14 +147,14 @@ func expandAndValidatePaths(paths []string, deps *service.Deps) ([]string, error
 
 		expandedPaths = append(expandedPaths, absPath)
 	}
-	
+
 	return expandedPaths, nil
 }
 
 func displayRepositoriesSummary(repos []domain.Repository) {
 	fmt.Println()
 	output.PrintHeader("Discovered Repositories")
-	
+
 	// Group by categories for summary
 	categoryCount := make(map[string]int)
 	for _, repo := range repos {
@@ -162,14 +162,14 @@ func displayRepositoriesSummary(repos []domain.Repository) {
 			categoryCount[category]++
 		}
 	}
-	
+
 	if len(categoryCount) > 0 {
 		fmt.Printf("Project types found:\n")
 		for category, count := range categoryCount {
 			fmt.Printf("  %s: %d repositories\n", category, count)
 		}
 	}
-	
+
 	// Show first few repositories as examples
 	fmt.Printf("\nRepositories (showing first 10):\n")
 	for i, repo := range repos {
@@ -184,23 +184,23 @@ func displayRepositoriesSummary(repos []domain.Repository) {
 func displayRepositoriesVerbose(repos []domain.Repository) {
 	fmt.Println()
 	output.PrintHeader("Discovered Repositories (Detailed)")
-	
+
 	for _, repo := range repos {
 		fmt.Printf("📁 %s\n", repo.Name)
 		fmt.Printf("   Path: %s\n", repo.Path)
-		
+
 		if repo.RemoteURL != "" {
 			fmt.Printf("   Remote: %s\n", repo.RemoteURL)
 		}
-		
+
 		if repo.CurrentBranch != "" {
 			fmt.Printf("   Branch: %s\n", repo.CurrentBranch)
 		}
-		
+
 		if len(repo.Categories) > 0 {
 			fmt.Printf("   Categories: %s\n", strings.Join(repo.Categories, ", "))
 		}
-		
+
 		if len(repo.Branches) > 0 {
 			branches := repo.Branches
 			if len(branches) > 5 {
@@ -208,7 +208,7 @@ func displayRepositoriesVerbose(repos []domain.Repository) {
 			}
 			fmt.Printf("   Branches: %s\n", strings.Join(branches, ", "))
 		}
-		
+
 		if len(repo.Tags) > 0 {
 			tags := repo.Tags
 			if len(tags) > 3 {
@@ -216,7 +216,7 @@ func displayRepositoriesVerbose(repos []domain.Repository) {
 			}
 			fmt.Printf("   Tags: %s\n", strings.Join(tags, ", "))
 		}
-		
+
 		fmt.Println()
 	}
 }

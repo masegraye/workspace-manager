@@ -82,7 +82,7 @@ func runListReposV2(ctx context.Context, format string, tags []string) error {
 
 	if len(repos) == 0 {
 		if len(tags) > 0 {
-			deps.Logger.Info("No repositories found with specified tags", 
+			deps.Logger.Info("No repositories found with specified tags",
 				ux.Field("tags", strings.Join(tags, ", ")))
 		} else {
 			deps.Logger.Info("No repositories found. Run 'wsm discover-v2' to scan for repositories")

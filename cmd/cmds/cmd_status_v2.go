@@ -100,7 +100,7 @@ func runStatusV2(ctx context.Context, workspacePath string, short, untracked, js
 		return errors.Wrapf(err, "failed to load workspace from '%s'", workspacePath)
 	}
 
-	deps.Logger.Info("Getting workspace status", 
+	deps.Logger.Info("Getting workspace status",
 		ux.Field("workspace", workspace.Name),
 		ux.Field("path", workspace.Path))
 
@@ -131,7 +131,7 @@ func loadWorkspaceFromPathV2(workspacePath string, deps *service.Deps) (*domain.
 
 	// Look for .wsm/wsm.json metadata file
 	metadataPath := deps.FS.Join(absPath, ".wsm", "wsm.json")
-	
+
 	if !deps.FS.Exists(metadataPath) {
 		// Try to find workspace metadata by walking up the directory tree
 		for dir := absPath; dir != "/" && dir != ""; dir = filepath.Dir(dir) {
@@ -195,10 +195,10 @@ func printStatusShortV2(status *domain.WorkspaceStatus, includeUntracked bool) e
 			aheadBehind = "-"
 		}
 
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", 
-			repo.Repository.Name, 
-			statusIcon, 
-			repo.CurrentBranch, 
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+			repo.Repository.Name,
+			statusIcon,
+			repo.CurrentBranch,
 			aheadBehind)
 	}
 

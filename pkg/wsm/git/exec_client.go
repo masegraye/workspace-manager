@@ -17,23 +17,23 @@ func NewExecClient() Client {
 
 func (c *ExecClient) WorktreeAdd(ctx context.Context, repoPath, branch, targetPath string, opts WorktreeAddOpts) error {
 	args := []string{"worktree", "add"}
-	
+
 	if opts.Force {
 		args = append(args, "-f")
 	}
-	
+
 	if opts.NewBranch && branch != "" {
 		args = append(args, "-b", branch)
 	}
-	
+
 	args = append(args, targetPath)
-	
+
 	if opts.Track != "" {
 		args = append(args, opts.Track)
 	} else if branch != "" && !opts.NewBranch {
 		args = append(args, branch)
 	}
-	
+
 	return c.runInRepo(ctx, repoPath, "git", args...)
 }
 
@@ -43,7 +43,7 @@ func (c *ExecClient) WorktreeRemove(ctx context.Context, repoPath, targetPath st
 		args = append(args, "-f")
 	}
 	args = append(args, targetPath)
-	
+
 	return c.runInRepo(ctx, repoPath, "git", args...)
 }
 
@@ -52,7 +52,7 @@ func (c *ExecClient) WorktreeList(ctx context.Context, repoPath string) ([]Workt
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return c.parseWorktreeList(output), nil
 }
 
@@ -86,12 +86,24 @@ func (c *ExecClient) CurrentBranch(ctx context.Context, repoPath string) (string
 	return strings.TrimSpace(output), nil
 }
 
+func (c *ExecClient) CreateBranch(ctx context.Context, repoPath, branchName string, track bool) error {
+	args := []string{"checkout", "-b", branchName}
+	if track {
+		args = append(args, "--track")
+	}
+	return c.runInRepo(ctx, repoPath, "git", args...)
+}
+
+func (c *ExecClient) SwitchBranch(ctx context.Context, repoPath, branchName string) error {
+	return c.runInRepo(ctx, repoPath, "git", "checkout", branchName)
+}
+
 func (c *ExecClient) Status(ctx context.Context, repoPath string) (*StatusInfo, error) {
 	output, err := c.runInRepoWithOutput(ctx, repoPath, "git", "status", "--porcelain")
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return c.parseStatus(output), nil
 }
 
@@ -100,22 +112,22 @@ func (c *ExecClient) AheadBehind(ctx context.Context, repoPath string) (ahead, b
 	if err != nil {
 		return 0, 0, err
 	}
-	
+
 	parts := strings.Fields(strings.TrimSpace(output))
 	if len(parts) != 2 {
 		return 0, 0, fmt.Errorf("unexpected output format: %s", output)
 	}
-	
+
 	ahead, err = strconv.Atoi(parts[0])
 	if err != nil {
 		return 0, 0, err
 	}
-	
+
 	behind, err = strconv.Atoi(parts[1])
 	if err != nil {
 		return 0, 0, err
 	}
-	
+
 	return ahead, behind, nil
 }
 
@@ -172,7 +184,7 @@ func (c *ExecClient) Branches(ctx context.Context, repoPath string) ([]string, e
 	if err != nil {
 		return nil, err
 	}
-	
+
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	var branches []string
 	for _, line := range lines {
@@ -188,7 +200,7 @@ func (c *ExecClient) Tags(ctx context.Context, repoPath string) ([]string, error
 	if err != nil {
 		return nil, err
 	}
-	
+
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	var tags []string
 	for _, line := range lines {
@@ -236,7 +248,7 @@ func (c *ExecClient) runInRepoWithOutput(ctx context.Context, repoPath string, n
 func (c *ExecClient) parseWorktreeList(output string) []WorktreeInfo {
 	var worktrees []WorktreeInfo
 	lines := strings.Split(strings.TrimSpace(output), "\n")
-	
+
 	var current WorktreeInfo
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -247,7 +259,7 @@ func (c *ExecClient) parseWorktreeList(output string) []WorktreeInfo {
 			}
 			continue
 		}
-		
+
 		if strings.HasPrefix(line, "worktree ") {
 			current.Path = strings.TrimPrefix(line, "worktree ")
 		} else if strings.HasPrefix(line, "HEAD ") {
@@ -256,11 +268,11 @@ func (c *ExecClient) parseWorktreeList(output string) []WorktreeInfo {
 			current.Branch = strings.TrimPrefix(line, "branch refs/heads/")
 		}
 	}
-	
+
 	if current.Path != "" {
 		worktrees = append(worktrees, current)
 	}
-	
+
 	return worktrees
 }
 
@@ -268,40 +280,40 @@ func (c *ExecClient) parseStatus(output string) *StatusInfo {
 	status := &StatusInfo{
 		Clean: true,
 	}
-	
+
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	for _, line := range lines {
 		if line = strings.TrimSpace(line); line == "" {
 			continue
 		}
-		
+
 		status.Clean = false
-		
+
 		if len(line) < 3 {
 			continue
 		}
-		
+
 		indexStatus := line[0]
 		workingStatus := line[1]
 		fileName := line[3:]
-		
+
 		switch indexStatus {
 		case 'A', 'M', 'D', 'R', 'C':
 			status.StagedFiles = append(status.StagedFiles, fileName)
 		}
-		
+
 		switch workingStatus {
 		case 'M', 'D':
 			status.ModifiedFiles = append(status.ModifiedFiles, fileName)
 		case '?':
 			status.UntrackedFiles = append(status.UntrackedFiles, fileName)
 		}
-		
+
 		if indexStatus == 'U' || workingStatus == 'U' {
 			status.HasConflicts = true
 		}
 	}
-	
+
 	return status
 }
 

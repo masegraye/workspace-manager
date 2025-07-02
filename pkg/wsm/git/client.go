@@ -10,25 +10,27 @@ type Client interface {
 	WorktreeAdd(ctx context.Context, repoPath, branch, targetPath string, opts WorktreeAddOpts) error
 	WorktreeRemove(ctx context.Context, repoPath, targetPath string, force bool) error
 	WorktreeList(ctx context.Context, repoPath string) ([]WorktreeInfo, error)
-	
+
 	// Branch operations
 	BranchExists(ctx context.Context, repoPath, branch string) (bool, error)
 	RemoteBranchExists(ctx context.Context, repoPath, branch string) (bool, error)
 	CurrentBranch(ctx context.Context, repoPath string) (string, error)
-	
+	CreateBranch(ctx context.Context, repoPath, branchName string, track bool) error
+	SwitchBranch(ctx context.Context, repoPath, branchName string) error
+
 	// Status and changes
 	Status(ctx context.Context, repoPath string) (*StatusInfo, error)
 	AheadBehind(ctx context.Context, repoPath string) (ahead, behind int, err error)
 	HasChanges(ctx context.Context, repoPath string) (bool, error)
 	UntrackedFiles(ctx context.Context, repoPath string) ([]string, error)
-	
+
 	// Operations
 	Add(ctx context.Context, repoPath, filePath string) error
 	Commit(ctx context.Context, repoPath, message string) error
 	Push(ctx context.Context, repoPath string) error
 	Pull(ctx context.Context, repoPath string, rebase bool) error
 	Fetch(ctx context.Context, repoPath string) error
-	
+
 	// Repository info
 	RemoteURL(ctx context.Context, repoPath string) (string, error)
 	Branches(ctx context.Context, repoPath string) ([]string, error)

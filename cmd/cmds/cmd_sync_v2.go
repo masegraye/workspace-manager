@@ -41,10 +41,10 @@ Supports pulling latest changes, pushing local commits, and fetching updates.`,
 
 func NewSyncAllCommandV2() *cobra.Command {
 	var (
-		pull   bool
-		push   bool
-		rebase bool
-		dryRun bool
+		pull      bool
+		push      bool
+		rebase    bool
+		dryRun    bool
 		workspace string
 	)
 
@@ -89,8 +89,8 @@ Examples:
 
 func NewSyncPullCommandV2() *cobra.Command {
 	var (
-		rebase bool
-		dryRun bool
+		rebase    bool
+		dryRun    bool
 		workspace string
 	)
 
@@ -127,7 +127,7 @@ Examples:
 
 func NewSyncPushCommandV2() *cobra.Command {
 	var (
-		dryRun bool
+		dryRun    bool
 		workspace string
 	)
 
@@ -201,7 +201,7 @@ func runSyncAllV2(ctx context.Context, workspacePath string, pull, push, rebase,
 		return err
 	}
 
-	deps.Logger.Info("Starting workspace sync", 
+	deps.Logger.Info("Starting workspace sync",
 		ux.Field("workspace", workspace.Name),
 		ux.Field("pull", pull),
 		ux.Field("push", push),

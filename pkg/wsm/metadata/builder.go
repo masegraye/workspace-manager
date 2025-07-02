@@ -43,7 +43,7 @@ type RepositoryMetadata struct {
 // BuildWorkspaceMetadata creates the metadata JSON for a workspace
 func (b *Builder) BuildWorkspaceMetadata(ws domain.Workspace) ([]byte, error) {
 	now := b.clock()
-	
+
 	metadata := WorkspaceMetadata{
 		Name:        ws.Name,
 		Path:        ws.Path,
@@ -55,7 +55,7 @@ func (b *Builder) BuildWorkspaceMetadata(ws domain.Workspace) ([]byte, error) {
 		UpdatedAt:   now,
 		Environment: make(map[string]string),
 	}
-	
+
 	for _, repo := range ws.Repositories {
 		metadata.Repositories = append(metadata.Repositories, RepositoryMetadata{
 			Name:         repo.Name,
@@ -64,7 +64,7 @@ func (b *Builder) BuildWorkspaceMetadata(ws domain.Workspace) ([]byte, error) {
 			WorktreePath: filepath.Join(ws.Path, repo.Name),
 		})
 	}
-	
+
 	return json.MarshalIndent(metadata, "", "  ")
 }
 

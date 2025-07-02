@@ -36,7 +36,7 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, workspace domain.Works
 		repoPath := workspace.RepositoryWorktreePath(repo.Name)
 		status, err := s.GetRepositoryStatus(ctx, repo, repoPath)
 		if err != nil {
-			s.logger.Error("Failed to get repository status", 
+			s.logger.Error("Failed to get repository status",
 				ux.Field("repo", repo.Name),
 				ux.Field("error", err))
 			return nil, errors.Wrapf(err, "failed to get status for repository %s", repo.Name)
@@ -55,7 +55,7 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, workspace domain.Works
 
 // GetRepositoryStatus gets the detailed git status of a single repository
 func (s *Service) GetRepositoryStatus(ctx context.Context, repo domain.Repository, repoPath string) (*domain.RepositoryStatus, error) {
-	s.logger.Debug("Getting repository status", 
+	s.logger.Debug("Getting repository status",
 		ux.Field("repo", repo.Name),
 		ux.Field("path", repoPath))
 
@@ -67,7 +67,7 @@ func (s *Service) GetRepositoryStatus(ctx context.Context, repo domain.Repositor
 	if branch, err := s.git.CurrentBranch(ctx, repoPath); err == nil {
 		status.CurrentBranch = branch
 	} else {
-		s.logger.Debug("Failed to get current branch", 
+		s.logger.Debug("Failed to get current branch",
 			ux.Field("repo", repo.Name),
 			ux.Field("error", err))
 	}
@@ -75,7 +75,7 @@ func (s *Service) GetRepositoryStatus(ctx context.Context, repo domain.Repositor
 	// Get git status information
 	gitStatus, err := s.git.Status(ctx, repoPath)
 	if err != nil {
-		s.logger.Debug("Failed to get git status", 
+		s.logger.Debug("Failed to get git status",
 			ux.Field("repo", repo.Name),
 			ux.Field("error", err))
 	} else {
@@ -91,7 +91,7 @@ func (s *Service) GetRepositoryStatus(ctx context.Context, repo domain.Repositor
 		status.Ahead = ahead
 		status.Behind = behind
 	} else {
-		s.logger.Debug("Failed to get ahead/behind status", 
+		s.logger.Debug("Failed to get ahead/behind status",
 			ux.Field("repo", repo.Name),
 			ux.Field("error", err))
 	}
@@ -117,7 +117,7 @@ func (s *Service) GetCleanRepositories(ctx context.Context, workspace domain.Wor
 		repoPath := workspace.RepositoryWorktreePath(repo.Name)
 		hasChanges, err := s.git.HasChanges(ctx, repoPath)
 		if err != nil {
-			s.logger.Debug("Failed to check for changes", 
+			s.logger.Debug("Failed to check for changes",
 				ux.Field("repo", repo.Name),
 				ux.Field("error", err))
 			continue
@@ -139,7 +139,7 @@ func (s *Service) GetDirtyRepositories(ctx context.Context, workspace domain.Wor
 		repoPath := workspace.RepositoryWorktreePath(repo.Name)
 		hasChanges, err := s.git.HasChanges(ctx, repoPath)
 		if err != nil {
-			s.logger.Debug("Failed to check for changes", 
+			s.logger.Debug("Failed to check for changes",
 				ux.Field("repo", repo.Name),
 				ux.Field("error", err))
 			continue

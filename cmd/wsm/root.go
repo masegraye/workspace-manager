@@ -59,16 +59,19 @@ func init() {
 		cmds.NewDiscoverCommand(),
 		cmds.NewDiscoverCommandV2(), // New service-based implementation
 		cmds.NewListCommand(),
-		cmds.NewListCommandV2(),     // New service-based implementation
+		cmds.NewListCommandV2(), // New service-based implementation
 		cmds.NewCreateCommand(),
 		cmds.NewCreateCommandV2(), // New service-based implementation
 		cmds.NewForkCommand(),
 		cmds.NewMergeCommand(),
 		cmds.NewAddCommand(),
+		cmds.NewAddCommandV2(), // New service-based implementation
 		cmds.NewRemoveCommand(),
+		cmds.NewRemoveCommandV2(), // New service-based implementation
 		cmds.NewDeleteCommand(),
 		cmds.NewDeleteCommandV2(), // New service-based implementation
 		cmds.NewInfoCommand(),
+		cmds.NewInfoCommandV2(), // New service-based implementation
 		cmds.NewStatusCommand(),
 		cmds.NewStatusCommandV2(), // New service-based implementation
 		cmds.NewPRCommand(),
@@ -82,6 +85,7 @@ func init() {
 		cmds.NewDiffCommand(),
 		cmds.NewLogCommand(),
 		cmds.NewTmuxCommand(),
+		cmds.NewTmuxCommandV2(), // New service-based implementation
 		cmds.NewStarshipCommand(),
 	)
 

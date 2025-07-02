@@ -111,7 +111,7 @@ func runCreateV2(ctx context.Context, name string, repos []string, branch, branc
 	}
 
 	// Create workspace using the new service
-	deps.Logger.Info("Creating workspace", 
+	deps.Logger.Info("Creating workspace",
 		ux.Field("name", name),
 		ux.Field("repos", repos),
 		ux.Field("branch", finalBranch),
@@ -126,7 +126,7 @@ func runCreateV2(ctx context.Context, name string, repos []string, branch, branc
 		AgentMD:    agentMDContent,
 		DryRun:     dryRun,
 	})
-	
+
 	if err != nil {
 		// Check if user cancelled - handle gracefully without error
 		errMsg := strings.ToLower(err.Error())
@@ -148,13 +148,13 @@ func runCreateV2(ctx context.Context, name string, repos []string, branch, branc
 
 	output.PrintHeader("Workspace Details")
 	fmt.Printf("  Path: %s\n", workspace.Path)
-	
+
 	repoNames := make([]string, len(workspace.Repositories))
 	for i, repo := range workspace.Repositories {
 		repoNames[i] = repo.Name
 	}
 	fmt.Printf("  Repositories: %s\n", strings.Join(repoNames, ", "))
-	
+
 	if workspace.Branch != "" {
 		fmt.Printf("  Branch: %s\n", workspace.Branch)
 	}
@@ -169,7 +169,7 @@ func runCreateV2(ctx context.Context, name string, repos []string, branch, branc
 	output.PrintInfo("To start working:")
 	fmt.Printf("  cd %s\n", workspace.Path)
 
-	deps.Logger.Info("Workspace creation completed successfully", 
+	deps.Logger.Info("Workspace creation completed successfully",
 		ux.Field("name", workspace.Name),
 		ux.Field("path", workspace.Path))
 
@@ -231,13 +231,13 @@ func showWorkspacePreviewV2(workspace domain.Workspace, logger ux.Logger) error 
 	output.PrintHeader("Dry Run - Workspace Preview")
 	fmt.Printf("  Name: %s\n", workspace.Name)
 	fmt.Printf("  Path: %s\n", workspace.Path)
-	
+
 	repoNames := make([]string, len(workspace.Repositories))
 	for i, repo := range workspace.Repositories {
 		repoNames[i] = repo.Name
 	}
 	fmt.Printf("  Repositories: %s\n", strings.Join(repoNames, ", "))
-	
+
 	if workspace.Branch != "" {
 		fmt.Printf("  Branch: %s\n", workspace.Branch)
 	}
@@ -250,15 +250,15 @@ func showWorkspacePreviewV2(workspace domain.Workspace, logger ux.Logger) error 
 
 	fmt.Println()
 	output.PrintInfo("Files that would be created:")
-	
+
 	// Show metadata file
 	fmt.Printf("  %s\n", workspace.MetadataPath())
-	
+
 	// Show go.work if applicable
 	if workspace.GoWorkspace {
 		fmt.Printf("  %s\n", workspace.GoWorkPath())
 	}
-	
+
 	// Show AGENT.md if applicable
 	if workspace.AgentMD != "" {
 		fmt.Printf("  %s\n", workspace.AgentMDPath())

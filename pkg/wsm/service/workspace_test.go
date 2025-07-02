@@ -231,7 +231,7 @@ func TestWorkspaceService_Create(t *testing.T) {
 	mockFS := NewMockFileSystem()
 	mockGit := NewMockGitClient()
 	mockLogger := NewMockLogger()
-	
+
 	// Set up default config file
 	configPath := "/home/user/.config/wsm/config.json"
 	configData := `{
@@ -240,7 +240,7 @@ func TestWorkspaceService_Create(t *testing.T) {
 		"registry_path": "/home/user/.config/wsm/registry.json"
 	}`
 	mockFS.WriteFile(configPath, []byte(configData), 0644)
-	
+
 	// Set up registry with test repositories
 	registryPath := "/home/user/.config/wsm/registry.json"
 	registryData := `{
@@ -263,7 +263,7 @@ func TestWorkspaceService_Create(t *testing.T) {
 		"last_scan": "2023-01-01T00:00:00Z"
 	}`
 	mockFS.WriteFile(registryPath, []byte(registryData), 0644)
-	
+
 	deps := &Deps{
 		FS:       mockFS,
 		Git:      mockGit,
@@ -271,9 +271,9 @@ func TestWorkspaceService_Create(t *testing.T) {
 		Logger:   mockLogger,
 		Clock:    func() time.Time { return time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC) },
 	}
-	
+
 	service := NewWorkspaceService(deps)
-	
+
 	// Act
 	workspace, err := service.Create(context.Background(), CreateRequest{
 		Name:      "test-workspace",
@@ -281,36 +281,36 @@ func TestWorkspaceService_Create(t *testing.T) {
 		Branch:    "feature/test",
 		DryRun:    false,
 	})
-	
+
 	// Assert
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
-	
+
 	if workspace.Name != "test-workspace" {
 		t.Errorf("Expected workspace name 'test-workspace', got %s", workspace.Name)
 	}
-	
+
 	expectedPath := "/home/user/workspaces/test-workspace"
 	if workspace.Path != expectedPath {
 		t.Errorf("Expected workspace path %s, got %s", expectedPath, workspace.Path)
 	}
-	
+
 	if len(workspace.Repositories) != 2 {
 		t.Errorf("Expected 2 repositories, got %d", len(workspace.Repositories))
 	}
-	
+
 	// Verify metadata was created
 	metadataPath := "/home/user/workspaces/test-workspace/.wsm/wsm.json"
 	if !mockFS.Exists(metadataPath) {
 		t.Error("Expected metadata file to be created")
 	}
-	
+
 	// Verify directories were created
 	if !mockFS.Exists("/home/user/workspaces/test-workspace") {
 		t.Error("Expected workspace directory to be created")
 	}
-	
+
 	// Check that logger was used
 	if len(mockLogger.messages) == 0 {
 		t.Error("Expected log messages to be written")
@@ -322,7 +322,7 @@ func TestWorkspaceService_Create_DryRun(t *testing.T) {
 	mockFS := NewMockFileSystem()
 	mockGit := NewMockGitClient()
 	mockLogger := NewMockLogger()
-	
+
 	// Set up config and registry
 	configPath := "/home/user/.config/wsm/config.json"
 	configData := `{
@@ -330,7 +330,7 @@ func TestWorkspaceService_Create_DryRun(t *testing.T) {
 		"registry_path": "/home/user/.config/wsm/registry.json"
 	}`
 	mockFS.WriteFile(configPath, []byte(configData), 0644)
-	
+
 	registryPath := "/home/user/.config/wsm/registry.json"
 	registryData := `{
 		"repositories": [
@@ -343,7 +343,7 @@ func TestWorkspaceService_Create_DryRun(t *testing.T) {
 		"last_scan": "2023-01-01T00:00:00Z"
 	}`
 	mockFS.WriteFile(registryPath, []byte(registryData), 0644)
-	
+
 	deps := &Deps{
 		FS:       mockFS,
 		Git:      mockGit,
@@ -351,9 +351,9 @@ func TestWorkspaceService_Create_DryRun(t *testing.T) {
 		Logger:   mockLogger,
 		Clock:    func() time.Time { return time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC) },
 	}
-	
+
 	service := NewWorkspaceService(deps)
-	
+
 	// Act
 	workspace, err := service.Create(context.Background(), CreateRequest{
 		Name:      "test-workspace",
@@ -361,16 +361,16 @@ func TestWorkspaceService_Create_DryRun(t *testing.T) {
 		Branch:    "feature/test",
 		DryRun:    true,
 	})
-	
+
 	// Assert
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
-	
+
 	if workspace == nil {
 		t.Fatal("Expected workspace to be returned")
 	}
-	
+
 	// Verify workspace-specific files were not created in dry run mode
 	workspaceFiles := 0
 	for path := range mockFS.files {
@@ -381,7 +381,7 @@ func TestWorkspaceService_Create_DryRun(t *testing.T) {
 	if workspaceFiles > 0 {
 		t.Errorf("Expected no workspace files to be created in dry run mode, found %d", workspaceFiles)
 	}
-	
+
 	workspaceDirs := 0
 	for path := range mockFS.dirs {
 		if strings.Contains(path, "test-workspace") {

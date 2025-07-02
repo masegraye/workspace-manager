@@ -20,13 +20,13 @@ func (g *Generator) Generate(workspace domain.Workspace) string {
 	var content strings.Builder
 	content.WriteString("go 1.21\n\n")
 	content.WriteString("use (\n")
-	
+
 	for _, repo := range workspace.Repositories {
 		if repo.IsGoProject() {
 			content.WriteString(fmt.Sprintf("    ./%s\n", repo.Name))
 		}
 	}
-	
+
 	content.WriteString(")\n")
 	return content.String()
 }
@@ -36,13 +36,13 @@ func (g *Generator) GenerateFromRepositories(repositories []domain.Repository) s
 	var content strings.Builder
 	content.WriteString("go 1.21\n\n")
 	content.WriteString("use (\n")
-	
+
 	for _, repo := range repositories {
 		if repo.IsGoProject() {
 			content.WriteString(fmt.Sprintf("    ./%s\n", repo.Name))
 		}
 	}
-	
+
 	content.WriteString(")\n")
 	return content.String()
 }

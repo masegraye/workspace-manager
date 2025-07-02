@@ -47,7 +47,7 @@ type SyncOptions struct {
 
 // SyncWorkspace synchronizes all repositories in the workspace
 func (s *Service) SyncWorkspace(ctx context.Context, workspace domain.Workspace, options SyncOptions) ([]SyncResult, error) {
-	s.logger.Info("Starting workspace sync", 
+	s.logger.Info("Starting workspace sync",
 		ux.Field("workspace", workspace.Name),
 		ux.Field("pull", options.Pull),
 		ux.Field("push", options.Push),
@@ -62,7 +62,7 @@ func (s *Service) SyncWorkspace(ctx context.Context, workspace domain.Workspace,
 		results = append(results, result)
 	}
 
-	s.logger.Info("Workspace sync completed", 
+	s.logger.Info("Workspace sync completed",
 		ux.Field("workspace", workspace.Name),
 		ux.Field("repositories", len(results)))
 
@@ -76,12 +76,12 @@ func (s *Service) SyncRepository(ctx context.Context, repoName, repoPath string,
 
 // PullRepository pulls changes from remote
 func (s *Service) PullRepository(ctx context.Context, repoPath string, rebase bool) error {
-	s.logger.Info("Pulling repository", 
+	s.logger.Info("Pulling repository",
 		ux.Field("path", repoPath),
 		ux.Field("rebase", rebase))
 
 	if err := s.git.Pull(ctx, repoPath, rebase); err != nil {
-		s.logger.Error("Failed to pull repository", 
+		s.logger.Error("Failed to pull repository",
 			ux.Field("path", repoPath),
 			ux.Field("error", err))
 		return errors.Wrap(err, "pull failed")
@@ -95,7 +95,7 @@ func (s *Service) PushRepository(ctx context.Context, repoPath string) error {
 	s.logger.Info("Pushing repository", ux.Field("path", repoPath))
 
 	if err := s.git.Push(ctx, repoPath); err != nil {
-		s.logger.Error("Failed to push repository", 
+		s.logger.Error("Failed to push repository",
 			ux.Field("path", repoPath),
 			ux.Field("error", err))
 		return errors.Wrap(err, "push failed")
@@ -109,7 +109,7 @@ func (s *Service) FetchRepository(ctx context.Context, repoPath string) error {
 	s.logger.Info("Fetching repository", ux.Field("path", repoPath))
 
 	if err := s.git.Fetch(ctx, repoPath); err != nil {
-		s.logger.Error("Failed to fetch repository", 
+		s.logger.Error("Failed to fetch repository",
 			ux.Field("path", repoPath),
 			ux.Field("error", err))
 		return errors.Wrap(err, "fetch failed")
@@ -125,7 +125,7 @@ func (s *Service) FetchWorkspace(ctx context.Context, workspace domain.Workspace
 	for _, repo := range workspace.Repositories {
 		repoPath := workspace.RepositoryWorktreePath(repo.Name)
 		if err := s.FetchRepository(ctx, repoPath); err != nil {
-			s.logger.Error("Failed to fetch repository in workspace", 
+			s.logger.Error("Failed to fetch repository in workspace",
 				ux.Field("workspace", workspace.Name),
 				ux.Field("repo", repo.Name),
 				ux.Field("error", err))
@@ -144,14 +144,14 @@ func (s *Service) syncRepository(ctx context.Context, repoName, repoPath string,
 		Success:    true,
 	}
 
-	s.logger.Debug("Syncing repository", 
+	s.logger.Debug("Syncing repository",
 		ux.Field("repo", repoName),
 		ux.Field("path", repoPath))
 
 	// Get initial ahead/behind status
 	ahead, behind, err := s.git.AheadBehind(ctx, repoPath)
 	if err != nil {
-		s.logger.Error("Failed to get initial ahead/behind status", 
+		s.logger.Error("Failed to get initial ahead/behind status",
 			ux.Field("repo", repoName),
 			ux.Field("error", err))
 		result.Success = false
@@ -170,12 +170,12 @@ func (s *Service) syncRepository(ctx context.Context, repoName, repoPath string,
 	// Pull changes if requested
 	if options.Pull {
 		if err := s.git.Pull(ctx, repoPath, options.Rebase); err != nil {
-			s.logger.Error("Pull failed", 
+			s.logger.Error("Pull failed",
 				ux.Field("repo", repoName),
 				ux.Field("error", err))
 			result.Success = false
 			result.Error = "pull failed: " + err.Error()
-			
+
 			// Check for conflicts
 			if status, statusErr := s.git.Status(ctx, repoPath); statusErr == nil {
 				result.Conflicts = status.HasConflicts
@@ -189,7 +189,7 @@ func (s *Service) syncRepository(ctx context.Context, repoName, repoPath string,
 	// Push changes if requested
 	if options.Push {
 		if err := s.git.Push(ctx, repoPath); err != nil {
-			s.logger.Error("Push failed", 
+			s.logger.Error("Push failed",
 				ux.Field("repo", repoName),
 				ux.Field("error", err))
 			result.Success = false
@@ -203,7 +203,7 @@ func (s *Service) syncRepository(ctx context.Context, repoName, repoPath string,
 	// Get final ahead/behind status
 	aheadAfter, behindAfter, err := s.git.AheadBehind(ctx, repoPath)
 	if err != nil {
-		s.logger.Warn("Failed to get final ahead/behind status", 
+		s.logger.Warn("Failed to get final ahead/behind status",
 			ux.Field("repo", repoName),
 			ux.Field("error", err))
 	} else {
@@ -211,7 +211,7 @@ func (s *Service) syncRepository(ctx context.Context, repoName, repoPath string,
 		result.BehindAfter = behindAfter
 	}
 
-	s.logger.Debug("Repository sync completed", 
+	s.logger.Debug("Repository sync completed",
 		ux.Field("repo", repoName),
 		ux.Field("success", result.Success))
 

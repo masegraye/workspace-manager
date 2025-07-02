@@ -41,7 +41,7 @@ type DiscoverOptions struct {
 
 // Discover discovers git repositories in the specified paths
 func (s *Service) Discover(ctx context.Context, opts DiscoverOptions) ([]domain.Repository, error) {
-	s.logger.Info("Starting repository discovery", 
+	s.logger.Info("Starting repository discovery",
 		ux.Field("paths", len(opts.Paths)),
 		ux.Field("recursive", opts.Recursive),
 		ux.Field("maxDepth", opts.MaxDepth))
@@ -51,7 +51,7 @@ func (s *Service) Discover(ctx context.Context, opts DiscoverOptions) ([]domain.
 	for _, path := range opts.Paths {
 		repos, err := s.scanDirectory(ctx, path, opts.Recursive, opts.MaxDepth, 0)
 		if err != nil {
-			s.logger.Error("Failed to scan directory", 
+			s.logger.Error("Failed to scan directory",
 				ux.Field("path", path),
 				ux.Field("error", err))
 			return nil, errors.Wrapf(err, "failed to scan directory %s", path)
@@ -59,7 +59,7 @@ func (s *Service) Discover(ctx context.Context, opts DiscoverOptions) ([]domain.
 		allRepos = append(allRepos, repos...)
 	}
 
-	s.logger.Info("Discovery completed", 
+	s.logger.Info("Discovery completed",
 		ux.Field("repositories", len(allRepos)))
 
 	return allRepos, nil
@@ -106,7 +106,7 @@ func (s *Service) UpdateRegistry(repositories []domain.Repository) error {
 		return errors.Wrap(err, "failed to save registry")
 	}
 
-	s.logger.Info("Registry updated", 
+	s.logger.Info("Registry updated",
 		ux.Field("repositories", len(registry.Repositories)))
 
 	return nil
@@ -171,18 +171,18 @@ func (s *Service) scanDirectory(ctx context.Context, path string, recursive bool
 	// Check if this directory is a git repository
 	isRepo, err := s.git.IsRepository(ctx, path)
 	if err != nil {
-		s.logger.Debug("Failed to check if directory is repository", 
+		s.logger.Debug("Failed to check if directory is repository",
 			ux.Field("path", path),
 			ux.Field("error", err))
 	} else if isRepo {
 		repo, err := s.analyzeRepository(ctx, path)
 		if err != nil {
-			s.logger.Warn("Failed to analyze repository", 
+			s.logger.Warn("Failed to analyze repository",
 				ux.Field("path", path),
 				ux.Field("error", err))
 		} else {
 			repositories = append(repositories, *repo)
-			s.logger.Debug("Found repository", 
+			s.logger.Debug("Found repository",
 				ux.Field("name", repo.Name),
 				ux.Field("path", repo.Path))
 		}
@@ -192,7 +192,7 @@ func (s *Service) scanDirectory(ctx context.Context, path string, recursive bool
 	if recursive {
 		entries, err := s.fs.ReadDir(path)
 		if err != nil {
-			s.logger.Debug("Failed to read directory", 
+			s.logger.Debug("Failed to read directory",
 				ux.Field("path", path),
 				ux.Field("error", err))
 			return repositories, nil
@@ -203,7 +203,7 @@ func (s *Service) scanDirectory(ctx context.Context, path string, recursive bool
 				subPath := s.fs.Join(path, entry.Name())
 				subRepos, err := s.scanDirectory(ctx, subPath, recursive, maxDepth, currentDepth+1)
 				if err != nil {
-					s.logger.Debug("Failed to scan subdirectory", 
+					s.logger.Debug("Failed to scan subdirectory",
 						ux.Field("path", subPath),
 						ux.Field("error", err))
 					continue
@@ -219,11 +219,11 @@ func (s *Service) scanDirectory(ctx context.Context, path string, recursive bool
 // analyzeRepository analyzes a git repository and extracts metadata
 func (s *Service) analyzeRepository(ctx context.Context, path string) (*domain.Repository, error) {
 	name := filepath.Base(path)
-	
+
 	// Get remote URL
 	remoteURL, err := s.git.RemoteURL(ctx, path)
 	if err != nil {
-		s.logger.Debug("Failed to get remote URL", 
+		s.logger.Debug("Failed to get remote URL",
 			ux.Field("path", path),
 			ux.Field("error", err))
 		remoteURL = ""
@@ -232,7 +232,7 @@ func (s *Service) analyzeRepository(ctx context.Context, path string) (*domain.R
 	// Get current branch
 	currentBranch, err := s.git.CurrentBranch(ctx, path)
 	if err != nil {
-		s.logger.Debug("Failed to get current branch", 
+		s.logger.Debug("Failed to get current branch",
 			ux.Field("path", path),
 			ux.Field("error", err))
 		currentBranch = ""
@@ -241,7 +241,7 @@ func (s *Service) analyzeRepository(ctx context.Context, path string) (*domain.R
 	// Get branches
 	branches, err := s.git.Branches(ctx, path)
 	if err != nil {
-		s.logger.Debug("Failed to get branches", 
+		s.logger.Debug("Failed to get branches",
 			ux.Field("path", path),
 			ux.Field("error", err))
 		branches = []string{}
@@ -250,7 +250,7 @@ func (s *Service) analyzeRepository(ctx context.Context, path string) (*domain.R
 	// Get tags
 	tags, err := s.git.Tags(ctx, path)
 	if err != nil {
-		s.logger.Debug("Failed to get tags", 
+		s.logger.Debug("Failed to get tags",
 			ux.Field("path", path),
 			ux.Field("error", err))
 		tags = []string{}
@@ -259,7 +259,7 @@ func (s *Service) analyzeRepository(ctx context.Context, path string) (*domain.R
 	// Get last commit
 	lastCommit, err := s.git.LastCommit(ctx, path)
 	if err != nil {
-		s.logger.Debug("Failed to get last commit", 
+		s.logger.Debug("Failed to get last commit",
 			ux.Field("path", path),
 			ux.Field("error", err))
 		lastCommit = ""
@@ -296,9 +296,9 @@ func (s *Service) detectCategories(path string) []string {
 	}
 
 	// Check for Python project
-	if s.fs.Exists(s.fs.Join(path, "setup.py")) || 
-	   s.fs.Exists(s.fs.Join(path, "pyproject.toml")) ||
-	   s.fs.Exists(s.fs.Join(path, "requirements.txt")) {
+	if s.fs.Exists(s.fs.Join(path, "setup.py")) ||
+		s.fs.Exists(s.fs.Join(path, "pyproject.toml")) ||
+		s.fs.Exists(s.fs.Join(path, "requirements.txt")) {
 		categories = append(categories, "python")
 	}
 
@@ -308,14 +308,14 @@ func (s *Service) detectCategories(path string) []string {
 	}
 
 	// Check for Java project
-	if s.fs.Exists(s.fs.Join(path, "pom.xml")) || 
-	   s.fs.Exists(s.fs.Join(path, "build.gradle")) {
+	if s.fs.Exists(s.fs.Join(path, "pom.xml")) ||
+		s.fs.Exists(s.fs.Join(path, "build.gradle")) {
 		categories = append(categories, "java")
 	}
 
 	// Check for Docker
-	if s.fs.Exists(s.fs.Join(path, "Dockerfile")) || 
-	   s.fs.Exists(s.fs.Join(path, "docker-compose.yml")) {
+	if s.fs.Exists(s.fs.Join(path, "Dockerfile")) ||
+		s.fs.Exists(s.fs.Join(path, "docker-compose.yml")) {
 		categories = append(categories, "docker")
 	}
 
