@@ -1,0 +1,80 @@
+package cmds
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/go-go-golems/workspace-manager/pkg/wsm/service"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm/ux"
+	"github.com/pkg/errors"
+	"github.com/spf13/cobra"
+)
+
+// NewCreateCommandNew demonstrates the new architecture
+// This would eventually replace cmd_create.go
+func NewCreateCommandNew() *cobra.Command {
+	var (
+		branch     string
+		baseBranch string
+		agentMD    string
+		dryRun     bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "create-new <workspace-name> <repo1> [repo2] [repo3]...",
+		Short: "Create a new workspace using the new architecture",
+		Args:  cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Build dependencies using production implementations
+			deps := service.NewDeps()
+			workspaceService := service.NewWorkspaceService(deps)
+
+			// Handle any interactive prompting here (in CLI layer only)
+			if !dryRun {
+				confirmed, err := deps.Prompter.Confirm(fmt.Sprintf("Create workspace '%s'?", args[0]))
+				if err != nil {
+					return err
+				}
+				if !confirmed {
+					deps.Logger.Info("Workspace creation cancelled")
+					return nil
+				}
+			}
+
+			// Execute service - all business logic happens here
+			workspace, err := workspaceService.Create(cmd.Context(), service.CreateRequest{
+				Name:       args[0],
+				RepoNames:  args[1:],
+				Branch:     branch,
+				BaseBranch: baseBranch,
+				AgentMD:    agentMD,
+				DryRun:     dryRun,
+			})
+
+			if err != nil {
+				return errors.Wrap(err, "failed to create workspace")
+			}
+
+			if dryRun {
+				deps.Logger.Info("Dry run completed - workspace would be created",
+					ux.Field("name", workspace.Name),
+					ux.Field("path", workspace.Path),
+					ux.Field("repos", len(workspace.Repositories)))
+				return nil
+			}
+
+			deps.Logger.Info("Workspace created successfully",
+				ux.Field("name", workspace.Name),
+				ux.Field("path", workspace.Path))
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&branch, "branch", "", "Branch name for worktrees")
+	cmd.Flags().StringVar(&baseBranch, "base-branch", "", "Base branch to create new branch from")
+	cmd.Flags().StringVar(&agentMD, "agent-md", "", "AGENT.md content")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be created without actually creating")
+
+	return cmd
+}
