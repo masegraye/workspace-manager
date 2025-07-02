@@ -32,14 +32,19 @@ func NewMergeCommand() *cobra.Command {
 This command:
 1. Detects the current workspace (if not specified)
 2. Verifies the workspace is a fork (has a base branch)
-3. Checks that all repositories are clean before merging
-4. For each repository:
+3. Checks if a workspace exists for the base branch and enforces running from within it
+4. Checks that all repositories are clean before merging
+5. For each repository:
    - Switches to the base branch
    - Merges the workspace branch into the base branch
    - Pushes the merged changes
-5. Optionally deletes the workspace after successful merge
+6. Optionally deletes the workspace after successful merge
 
 The command handles merge conflicts gracefully and provides rollback on failure.
+
+IMPORTANT: If there's an existing workspace for the base branch, you must run this
+command from within that workspace to avoid git worktree conflicts. The command
+will detect this situation and provide guidance if you're in the wrong location.
 
 Examples:
   # Merge current workspace back to its base branch
@@ -107,6 +112,28 @@ func runMerge(ctx context.Context, workspaceName string, dryRun, force, keepWork
 	// Verify this is a forked workspace
 	if workspace.BaseBranch == "" {
 		return errors.New("workspace is not a fork (no base branch specified). Only forked workspaces can be merged.")
+	}
+
+	// Check if there's a workspace for the base branch
+	baseWorkspace, err := findWorkspaceByBranch(workspace.BaseBranch)
+	if err != nil {
+		return errors.Wrapf(err, "failed to check for base branch workspace")
+	}
+
+	// If there's a workspace for the base branch, ensure we're running from within it
+	if baseWorkspace != nil {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return errors.Wrap(err, "failed to get current directory")
+		}
+
+		// Check if current directory is within the base workspace
+		if !strings.HasPrefix(cwd, baseWorkspace.Path) {
+			return errors.Errorf("found workspace '%s' for base branch '%s'. Please run the merge command from within that workspace (at %s) to avoid git worktree conflicts",
+				baseWorkspace.Name, workspace.BaseBranch, baseWorkspace.Path)
+		}
+
+		output.PrintInfo("✓ Running merge from base workspace '%s' as required", baseWorkspace.Name)
 	}
 
 	output.PrintInfo("Merging workspace '%s' (branch: %s → %s)", workspace.Name, workspace.Branch, workspace.BaseBranch)
@@ -423,4 +450,20 @@ func rollbackMerges(ctx context.Context, workspace *wsm.Workspace, successfulMer
 	}
 
 	output.PrintInfo("🔄 Rollback completed")
+}
+
+// findWorkspaceByBranch finds a workspace that uses the given branch
+func findWorkspaceByBranch(branchName string) (*wsm.Workspace, error) {
+	workspaces, err := wsm.LoadWorkspaces()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to load workspaces")
+	}
+
+	for _, workspace := range workspaces {
+		if workspace.Branch == branchName {
+			return &workspace, nil
+		}
+	}
+
+	return nil, nil // No workspace found for this branch
 }
