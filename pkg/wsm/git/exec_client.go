@@ -109,7 +109,7 @@ func (c *ExecClient) Status(ctx context.Context, repoPath string) (*StatusInfo, 
 	return c.parseStatus(output), nil
 }
 
-func (c *ExecClient) AheadBehind(ctx context.Context, repoPath string) (ahead, behind int, err error) {
+func (c *ExecClient) AheadBehind(ctx context.Context, repoPath string) (int, int, error) {
 	output, err := c.runInRepoWithOutput(ctx, repoPath, "git", "rev-list", "--left-right", "--count", "HEAD...@{upstream}")
 	if err != nil {
 		return 0, 0, err
@@ -120,12 +120,12 @@ func (c *ExecClient) AheadBehind(ctx context.Context, repoPath string) (ahead, b
 		return 0, 0, fmt.Errorf("unexpected output format: %s", output)
 	}
 
-	ahead, err = strconv.Atoi(parts[0])
+	ahead, err := strconv.Atoi(parts[0])
 	if err != nil {
 		return 0, 0, err
 	}
 
-	behind, err = strconv.Atoi(parts[1])
+	behind, err := strconv.Atoi(parts[1])
 	if err != nil {
 		return 0, 0, err
 	}

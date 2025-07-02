@@ -67,5 +67,3 @@ func TagCompletion() carapace.Action {
 		return carapace.ActionMessage("tag completion not yet implemented")
 	})
 }
-
-

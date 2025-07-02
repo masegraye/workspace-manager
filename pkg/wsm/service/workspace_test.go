@@ -153,7 +153,7 @@ func (m *MockGitClient) Status(ctx context.Context, repoPath string) (*git.Statu
 	return &git.StatusInfo{Clean: true}, nil
 }
 
-func (m *MockGitClient) AheadBehind(ctx context.Context, repoPath string) (ahead, behind int, err error) {
+func (m *MockGitClient) AheadBehind(ctx context.Context, repoPath string) (int, int, error) {
 	return 0, 0, nil
 }
 
@@ -275,7 +275,9 @@ func TestWorkspaceService_Create(t *testing.T) {
 		"template_dir": "/home/user/.config/wsm/templates",
 		"registry_path": "/home/user/.config/wsm/registry.json"
 	}`
-	mockFS.WriteFile(configPath, []byte(configData), 0644)
+	if err := mockFS.WriteFile(configPath, []byte(configData), 0644); err != nil {
+		panic(err)
+	}
 
 	// Set up registry with test repositories
 	registryPath := "/home/user/.config/wsm/registry.json"
@@ -298,7 +300,9 @@ func TestWorkspaceService_Create(t *testing.T) {
 		],
 		"last_scan": "2023-01-01T00:00:00Z"
 	}`
-	mockFS.WriteFile(registryPath, []byte(registryData), 0644)
+	if err := mockFS.WriteFile(registryPath, []byte(registryData), 0644); err != nil {
+		panic(err)
+	}
 
 	deps := &Deps{
 		FS:       mockFS,
@@ -365,7 +369,9 @@ func TestWorkspaceService_Create_DryRun(t *testing.T) {
 		"workspace_dir": "/home/user/workspaces",
 		"registry_path": "/home/user/.config/wsm/registry.json"
 	}`
-	mockFS.WriteFile(configPath, []byte(configData), 0644)
+	if err := mockFS.WriteFile(configPath, []byte(configData), 0644); err != nil {
+		panic(err)
+	}
 
 	registryPath := "/home/user/.config/wsm/registry.json"
 	registryData := `{
@@ -378,7 +384,9 @@ func TestWorkspaceService_Create_DryRun(t *testing.T) {
 		],
 		"last_scan": "2023-01-01T00:00:00Z"
 	}`
-	mockFS.WriteFile(registryPath, []byte(registryData), 0644)
+	if err := mockFS.WriteFile(registryPath, []byte(registryData), 0644); err != nil {
+		panic(err)
+	}
 
 	deps := &Deps{
 		FS:       mockFS,

@@ -24,7 +24,9 @@ func TestWorkspaceService_Integration(t *testing.T) {
 		"template_dir": "/home/user/.config/wsm/templates",
 		"registry_path": "/home/user/.config/wsm/registry.json"
 	}`
-	mockFS.WriteFile(configPath, []byte(configData), 0644)
+	if err := mockFS.WriteFile(configPath, []byte(configData), 0644); err != nil {
+		panic(err)
+	}
 
 	// Set up registry with some repositories
 	registryPath := "/home/user/.config/wsm/registry.json"
@@ -47,7 +49,9 @@ func TestWorkspaceService_Integration(t *testing.T) {
 		],
 		"last_scan": "2023-01-01T00:00:00Z"
 	}`
-	mockFS.WriteFile(registryPath, []byte(registryData), 0644)
+	if err := mockFS.WriteFile(registryPath, []byte(registryData), 0644); err != nil {
+		panic(err)
+	}
 
 	deps := &Deps{
 		FS:       mockFS,
@@ -231,7 +235,9 @@ func TestWorkspaceService_Discovery(t *testing.T) {
 		"workspace_dir": "/home/user/workspaces",
 		"registry_path": "/home/user/.config/wsm/registry.json"
 	}`
-	mockFS.WriteFile(configPath, []byte(configData), 0644)
+	if err := mockFS.WriteFile(configPath, []byte(configData), 0644); err != nil {
+		panic(err)
+	}
 
 	service := NewWorkspaceService(deps)
 

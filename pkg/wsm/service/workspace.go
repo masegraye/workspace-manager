@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2059,7 +2060,11 @@ func (s *WorkspaceService) ApplyStarshipConfig(ctx context.Context, configPath, 
 	if err != nil {
 		return errors.Wrap(err, "failed to open config file")
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Printf("Failed to close file: %v", err)
+		}
+	}()
 
 	if _, err := file.WriteString(content); err != nil {
 		return errors.Wrap(err, "failed to write configuration")

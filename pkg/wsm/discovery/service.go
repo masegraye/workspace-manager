@@ -338,7 +338,7 @@ func (s *Service) findRepositoryByName(repositories []domain.Repository, name st
 }
 
 // mergeRepositories merges new repositories with existing ones, updating existing entries
-func (s *Service) mergeRepositories(existing, new []domain.Repository) []domain.Repository {
+func (s *Service) mergeRepositories(existing, newRepos []domain.Repository) []domain.Repository {
 	repoMap := make(map[string]domain.Repository)
 
 	// Add existing repositories to map
@@ -347,7 +347,7 @@ func (s *Service) mergeRepositories(existing, new []domain.Repository) []domain.
 	}
 
 	// Update with new repositories
-	for _, repo := range new {
+	for _, repo := range newRepos {
 		repoMap[repo.Path] = repo
 	}
 
