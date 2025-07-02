@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"path/filepath"
+	"time"
 
 	"github.com/go-go-golems/workspace-manager/pkg/wsm/domain"
 	"github.com/go-go-golems/workspace-manager/pkg/wsm/fs"
@@ -36,7 +37,7 @@ func (s *Service) Load() (*domain.WorkspaceConfig, error) {
 		}
 
 		return &domain.WorkspaceConfig{
-			WorkspaceDir: s.fs.Join(homeDir, "workspaces"),
+			WorkspaceDir: s.fs.Join(homeDir, "workspaces", time.Now().Format("2006-01-02")),
 			TemplateDir:  s.fs.Join(configDir, "wsm", "templates"),
 			RegistryPath: s.fs.Join(configDir, "wsm", "registry.json"),
 		}, nil
@@ -134,6 +135,7 @@ func (s *Service) SaveRegistry(registry *domain.RepositoryRegistry) error {
 
 // SaveWorkspace saves a workspace metadata file
 func (s *Service) SaveWorkspace(workspace *domain.Workspace) error {
+	// Save to local workspace metadata directory (.wsm/wsm.json)
 	metadataDir := filepath.Dir(workspace.MetadataPath())
 	if err := s.fs.MkdirAll(metadataDir, 0755); err != nil {
 		return errors.Wrap(err, "failed to create workspace metadata directory")
@@ -147,6 +149,22 @@ func (s *Service) SaveWorkspace(workspace *domain.Workspace) error {
 
 	if err := s.fs.WriteFile(workspace.MetadataPath(), data, 0644); err != nil {
 		return errors.Wrap(err, "failed to write workspace metadata")
+	}
+
+	// Also save to global workspace registry for list-v2 and info-v2 commands
+	configDir, err := s.fs.UserConfigDir()
+	if err != nil {
+		return errors.Wrap(err, "failed to get user config directory")
+	}
+
+	registryDir := s.fs.Join(configDir, "workspace-manager", "workspaces")
+	if err := s.fs.MkdirAll(registryDir, 0755); err != nil {
+		return errors.Wrap(err, "failed to create workspace registry directory")
+	}
+
+	registryPath := s.fs.Join(registryDir, workspace.Name+".json")
+	if err := s.fs.WriteFile(registryPath, data, 0644); err != nil {
+		return errors.Wrap(err, "failed to write workspace to registry")
 	}
 
 	return nil
