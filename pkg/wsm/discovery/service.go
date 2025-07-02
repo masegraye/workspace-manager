@@ -122,6 +122,44 @@ func (s *Service) GetRepositories() ([]domain.Repository, error) {
 	return registry.Repositories, nil
 }
 
+// GetRepositoriesByTags returns repositories filtered by tags
+func (s *Service) GetRepositoriesByTags(tags []string) ([]domain.Repository, error) {
+	allRepos, err := s.GetRepositories()
+	if err != nil {
+		return nil, err
+	}
+
+	if len(tags) == 0 {
+		return allRepos, nil
+	}
+
+	var filtered []domain.Repository
+	for _, repo := range allRepos {
+		if s.hasAllTags(repo.Categories, tags) {
+			filtered = append(filtered, repo)
+		}
+	}
+
+	return filtered, nil
+}
+
+// hasAllTags checks if repository has all the specified tags
+func (s *Service) hasAllTags(repoTags, requiredTags []string) bool {
+	for _, required := range requiredTags {
+		found := false
+		for _, tag := range repoTags {
+			if strings.EqualFold(tag, required) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
 // scanDirectory recursively scans a directory for git repositories
 func (s *Service) scanDirectory(ctx context.Context, path string, recursive bool, maxDepth, currentDepth int) ([]domain.Repository, error) {
 	if recursive && maxDepth > 0 && currentDepth >= maxDepth {

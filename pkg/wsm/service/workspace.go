@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 
 	"github.com/go-go-golems/workspace-manager/pkg/wsm/config"
@@ -271,6 +272,56 @@ func (s *WorkspaceService) ListRepositories() ([]domain.Repository, error) {
 	return s.discovery.GetRepositories()
 }
 
+// ListRepositoriesByTags returns repositories filtered by tags
+func (s *WorkspaceService) ListRepositoriesByTags(tags []string) ([]domain.Repository, error) {
+	return s.discovery.GetRepositoriesByTags(tags)
+}
+
+// ListWorkspaces returns all workspaces
+func (s *WorkspaceService) ListWorkspaces() ([]domain.Workspace, error) {
+	configDir, err := s.deps.FS.UserConfigDir()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get user config directory")
+	}
+
+	workspacesDir := s.deps.FS.Join(configDir, "workspace-manager", "workspaces")
+
+	if !s.deps.FS.Exists(workspacesDir) {
+		return []domain.Workspace{}, nil
+	}
+
+	entries, err := s.deps.FS.ReadDir(workspacesDir)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to read workspaces directory")
+	}
+
+	var workspaces []domain.Workspace
+	for _, entry := range entries {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
+			path := s.deps.FS.Join(workspacesDir, entry.Name())
+			data, err := s.deps.FS.ReadFile(path)
+			if err != nil {
+				s.deps.Logger.Warn("Failed to read workspace file", 
+					ux.Field("path", path), 
+					ux.Field("error", err))
+				continue
+			}
+
+			var workspace domain.Workspace
+			if err := json.Unmarshal(data, &workspace); err != nil {
+				s.deps.Logger.Warn("Failed to parse workspace file", 
+					ux.Field("path", path), 
+					ux.Field("error", err))
+				continue
+			}
+
+			workspaces = append(workspaces, workspace)
+		}
+	}
+
+	return workspaces, nil
+}
+
 // GetWorkspaceStatus returns the comprehensive status of a workspace
 func (s *WorkspaceService) GetWorkspaceStatus(ctx context.Context, workspace domain.Workspace) (*domain.WorkspaceStatus, error) {
 	return s.status.GetWorkspaceStatus(ctx, workspace)
@@ -284,4 +335,130 @@ func (s *WorkspaceService) SyncWorkspace(ctx context.Context, workspace domain.W
 // FetchWorkspace fetches all repositories in a workspace
 func (s *WorkspaceService) FetchWorkspace(ctx context.Context, workspace domain.Workspace) error {
 	return s.sync.FetchWorkspace(ctx, workspace)
+}
+
+// DeleteWorkspace deletes a workspace and optionally removes its files
+func (s *WorkspaceService) DeleteWorkspace(ctx context.Context, name string, removeFiles bool, forceWorktrees bool) error {
+	s.deps.Logger.Info("Deleting workspace", 
+		ux.Field("name", name),
+		ux.Field("removeFiles", removeFiles),
+		ux.Field("forceWorktrees", forceWorktrees))
+
+	// Load workspace to get its path
+	workspace, err := s.LoadWorkspace(name)
+	if err != nil {
+		return errors.Wrapf(err, "workspace '%s' not found", name)
+	}
+
+	// Remove worktrees first
+	if err := s.removeWorktrees(ctx, workspace, forceWorktrees); err != nil {
+		return errors.Wrap(err, "failed to remove worktrees")
+	}
+
+	// Remove workspace directory and files if requested
+	if removeFiles {
+		if s.deps.FS.Exists(workspace.Path) {
+			s.deps.Logger.Info("Removing workspace directory", ux.Field("path", workspace.Path))
+			
+			if err := s.deps.FS.RemoveAll(workspace.Path); err != nil {
+				return errors.Wrapf(err, "failed to remove workspace directory: %s", workspace.Path)
+			}
+		}
+	} else {
+		// Clean up workspace-specific files (go.work, AGENT.md)
+		s.cleanupWorkspaceSpecificFiles(workspace.Path)
+	}
+
+	// Remove workspace configuration
+	configDir, err := s.deps.FS.UserConfigDir()
+	if err != nil {
+		return errors.Wrap(err, "failed to get config directory")
+	}
+
+	configPath := s.deps.FS.Join(configDir, "workspace-manager", "workspaces", name+".json")
+	if s.deps.FS.Exists(configPath) {
+		if err := s.deps.FS.RemoveAll(configPath); err != nil {
+			return errors.Wrapf(err, "failed to remove workspace configuration: %s", configPath)
+		}
+	}
+
+	s.deps.Logger.Info("Workspace deleted successfully", ux.Field("name", name))
+	return nil
+}
+
+// LoadWorkspace loads a specific workspace by name
+func (s *WorkspaceService) LoadWorkspace(name string) (*domain.Workspace, error) {
+	configDir, err := s.deps.FS.UserConfigDir()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get config directory")
+	}
+
+	configPath := s.deps.FS.Join(configDir, "workspace-manager", "workspaces", name+".json")
+	
+	if !s.deps.FS.Exists(configPath) {
+		return nil, errors.Errorf("workspace '%s' not found", name)
+	}
+
+	data, err := s.deps.FS.ReadFile(configPath)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to read workspace configuration: %s", configPath)
+	}
+
+	var workspace domain.Workspace
+	if err := json.Unmarshal(data, &workspace); err != nil {
+		return nil, errors.Wrapf(err, "failed to parse workspace configuration: %s", configPath)
+	}
+
+	return &workspace, nil
+}
+
+// removeWorktrees removes git worktrees for a workspace
+func (s *WorkspaceService) removeWorktrees(ctx context.Context, workspace *domain.Workspace, force bool) error {
+	var errs []error
+
+	for _, repo := range workspace.Repositories {
+		worktreePath := s.deps.FS.Join(workspace.Path, repo.Name)
+		
+		s.deps.Logger.Info("Removing worktree", 
+			ux.Field("repo", repo.Name),
+			ux.Field("path", worktreePath))
+
+		if !s.deps.FS.Exists(worktreePath) {
+			s.deps.Logger.Debug("Worktree directory does not exist, skipping", ux.Field("path", worktreePath))
+			continue
+		}
+
+		// Remove the worktree using git
+		if err := s.deps.Git.WorktreeRemove(ctx, repo.Path, worktreePath, force); err != nil {
+			s.deps.Logger.Error("Failed to remove worktree", 
+				ux.Field("repo", repo.Name),
+				ux.Field("error", err))
+			errs = append(errs, errors.Wrapf(err, "failed to remove worktree for %s", repo.Name))
+			continue
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.Errorf("failed to remove %d worktrees: %v", len(errs), errs)
+	}
+
+	return nil
+}
+
+// cleanupWorkspaceSpecificFiles removes workspace-specific files
+func (s *WorkspaceService) cleanupWorkspaceSpecificFiles(workspacePath string) {
+	filesToClean := []string{"go.work", "go.work.sum", "AGENT.md"}
+	
+	for _, file := range filesToClean {
+		filePath := s.deps.FS.Join(workspacePath, file)
+		if s.deps.FS.Exists(filePath) {
+			if err := s.deps.FS.RemoveAll(filePath); err != nil {
+				s.deps.Logger.Warn("Failed to remove workspace file", 
+					ux.Field("file", filePath),
+					ux.Field("error", err))
+			} else {
+				s.deps.Logger.Debug("Removed workspace file", ux.Field("file", filePath))
+			}
+		}
+	}
 }

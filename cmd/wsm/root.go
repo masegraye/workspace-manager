@@ -59,6 +59,7 @@ func init() {
 		cmds.NewDiscoverCommand(),
 		cmds.NewDiscoverCommandV2(), // New service-based implementation
 		cmds.NewListCommand(),
+		cmds.NewListCommandV2(),     // New service-based implementation
 		cmds.NewCreateCommand(),
 		cmds.NewCreateCommandV2(), // New service-based implementation
 		cmds.NewForkCommand(),
@@ -66,6 +67,7 @@ func init() {
 		cmds.NewAddCommand(),
 		cmds.NewRemoveCommand(),
 		cmds.NewDeleteCommand(),
+		cmds.NewDeleteCommandV2(), // New service-based implementation
 		cmds.NewInfoCommand(),
 		cmds.NewStatusCommand(),
 		cmds.NewStatusCommandV2(), // New service-based implementation
