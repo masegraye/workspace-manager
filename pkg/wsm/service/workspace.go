@@ -5,9 +5,12 @@ import (
 	"path/filepath"
 
 	"github.com/go-go-golems/workspace-manager/pkg/wsm/config"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm/discovery"
 	"github.com/go-go-golems/workspace-manager/pkg/wsm/domain"
 	"github.com/go-go-golems/workspace-manager/pkg/wsm/gowork"
 	"github.com/go-go-golems/workspace-manager/pkg/wsm/metadata"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm/status"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm/sync"
 	"github.com/go-go-golems/workspace-manager/pkg/wsm/ux"
 	"github.com/go-go-golems/workspace-manager/pkg/wsm/worktree"
 	"github.com/pkg/errors"
@@ -20,16 +23,23 @@ type WorkspaceService struct {
 	metadata  *metadata.Builder
 	gowork    *gowork.Generator
 	config    *config.Service
+	discovery *discovery.Service
+	status    *status.Service
+	sync      *sync.Service
 }
 
 // NewWorkspaceService creates a new workspace service
 func NewWorkspaceService(deps *Deps) *WorkspaceService {
+	configService := config.New(deps.FS)
 	return &WorkspaceService{
-		deps:     deps,
-		worktree: worktree.New(deps.Git, deps.Logger),
-		metadata: metadata.New(deps.Clock),
-		gowork:   gowork.New(),
-		config:   config.New(deps.FS),
+		deps:      deps,
+		worktree:  worktree.New(deps.Git, deps.Logger),
+		metadata:  metadata.New(deps.Clock),
+		gowork:    gowork.New(),
+		config:    configService,
+		discovery: discovery.New(deps.FS, deps.Git, deps.Logger, configService),
+		status:    status.New(deps.FS, deps.Git, deps.Logger),
+		sync:      sync.New(deps.Git, deps.Logger),
 	}
 }
 
@@ -88,8 +98,8 @@ func (s *WorkspaceService) Create(ctx context.Context, req CreateRequest, opts .
 	
 	workspacePath := s.deps.FS.Join(cfg.WorkspaceDir, req.Name)
 	
-	// Find repositories (simplified for now - would need discovery service)
-	repos, err := s.findRepositories(req.RepoNames)
+	// Find repositories using discovery service
+	repos, err := s.discovery.FindRepositories(req.RepoNames)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to find repositories")
 	}
@@ -242,23 +252,36 @@ func (s *WorkspaceService) shouldCreateGoWorkspace(repos []domain.Repository) bo
 	return false
 }
 
-// findRepositories finds repositories by name (simplified implementation)
-// In production, this would use a discovery service
-func (s *WorkspaceService) findRepositories(repoNames []string) ([]domain.Repository, error) {
-	// This is a simplified implementation
-	// In the real refactoring, this would use a proper discovery service
-	var repos []domain.Repository
-	
-	for _, name := range repoNames {
-		// For now, create a placeholder repository
-		// In production, this would query the registry
-		repo := domain.Repository{
-			Name:       name,
-			Path:       "/path/to/" + name, // placeholder
-			Categories: []string{},         // would be determined by discovery
-		}
-		repos = append(repos, repo)
+// DiscoverRepositories discovers repositories in the given paths and updates the registry
+func (s *WorkspaceService) DiscoverRepositories(ctx context.Context, paths []string, recursive bool, maxDepth int) error {
+	repos, err := s.discovery.Discover(ctx, discovery.DiscoverOptions{
+		Paths:     paths,
+		Recursive: recursive,
+		MaxDepth:  maxDepth,
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to discover repositories")
 	}
 	
-	return repos, nil
+	return s.discovery.UpdateRegistry(repos)
+}
+
+// ListRepositories returns all repositories from the registry
+func (s *WorkspaceService) ListRepositories() ([]domain.Repository, error) {
+	return s.discovery.GetRepositories()
+}
+
+// GetWorkspaceStatus returns the comprehensive status of a workspace
+func (s *WorkspaceService) GetWorkspaceStatus(ctx context.Context, workspace domain.Workspace) (*domain.WorkspaceStatus, error) {
+	return s.status.GetWorkspaceStatus(ctx, workspace)
+}
+
+// SyncWorkspace synchronizes all repositories in a workspace
+func (s *WorkspaceService) SyncWorkspace(ctx context.Context, workspace domain.Workspace, options sync.SyncOptions) ([]sync.SyncResult, error) {
+	return s.sync.SyncWorkspace(ctx, workspace, options)
+}
+
+// FetchWorkspace fetches all repositories in a workspace
+func (s *WorkspaceService) FetchWorkspace(ctx context.Context, workspace domain.Workspace) error {
+	return s.sync.FetchWorkspace(ctx, workspace)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,17 @@ type MockFileSystem struct {
 	files map[string][]byte
 	dirs  map[string]bool
 }
+
+// mockDirEntry implements os.DirEntry for testing
+type mockDirEntry struct {
+	name  string
+	isDir bool
+}
+
+func (m *mockDirEntry) Name() string               { return m.name }
+func (m *mockDirEntry) IsDir() bool                { return m.isDir }
+func (m *mockDirEntry) Type() fs.FileMode          { return 0 }
+func (m *mockDirEntry) Info() (fs.FileInfo, error) { return nil, nil }
 
 func NewMockFileSystem() *MockFileSystem {
 	return &MockFileSystem{
@@ -53,7 +65,20 @@ func (m *MockFileSystem) ReadFile(filename string) ([]byte, error) {
 }
 
 func (m *MockFileSystem) ReadDir(dirname string) ([]os.DirEntry, error) {
-	return nil, nil // Simplified for this example
+	var entries []os.DirEntry
+	for path := range m.dirs {
+		if filepath.Dir(path) == dirname {
+			name := filepath.Base(path)
+			entries = append(entries, &mockDirEntry{name: name, isDir: true})
+		}
+	}
+	for path := range m.files {
+		if filepath.Dir(path) == dirname {
+			name := filepath.Base(path)
+			entries = append(entries, &mockDirEntry{name: name, isDir: false})
+		}
+	}
+	return entries, nil
 }
 
 func (m *MockFileSystem) Stat(name string) (fs.FileInfo, error) {
@@ -79,12 +104,14 @@ func (m *MockFileSystem) Join(elem ...string) string {
 
 // MockGitClient implements git.Client for testing
 type MockGitClient struct {
-	worktrees map[string][]git.WorktreeInfo
+	worktrees      map[string][]git.WorktreeInfo
+	isRepoResponse map[string]bool
 }
 
 func NewMockGitClient() *MockGitClient {
 	return &MockGitClient{
-		worktrees: make(map[string][]git.WorktreeInfo),
+		worktrees:      make(map[string][]git.WorktreeInfo),
+		isRepoResponse: make(map[string]bool),
 	}
 }
 
@@ -167,7 +194,10 @@ func (m *MockGitClient) LastCommit(ctx context.Context, repoPath string) (string
 }
 
 func (m *MockGitClient) IsRepository(ctx context.Context, path string) (bool, error) {
-	return true, nil
+	if result, exists := m.isRepoResponse[path]; exists {
+		return result, nil
+	}
+	return true, nil // Default behavior
 }
 
 // MockLogger implements ux.Logger for testing
@@ -210,6 +240,29 @@ func TestWorkspaceService_Create(t *testing.T) {
 		"registry_path": "/home/user/.config/wsm/registry.json"
 	}`
 	mockFS.WriteFile(configPath, []byte(configData), 0644)
+	
+	// Set up registry with test repositories
+	registryPath := "/home/user/.config/wsm/registry.json"
+	registryData := `{
+		"repositories": [
+			{
+				"name": "repo1",
+				"path": "/source/repo1",
+				"categories": ["go"],
+				"remote_url": "https://github.com/example/repo1.git",
+				"current_branch": "main"
+			},
+			{
+				"name": "repo2", 
+				"path": "/source/repo2",
+				"categories": ["nodejs"],
+				"remote_url": "https://github.com/example/repo2.git",
+				"current_branch": "main"
+			}
+		],
+		"last_scan": "2023-01-01T00:00:00Z"
+	}`
+	mockFS.WriteFile(registryPath, []byte(registryData), 0644)
 	
 	deps := &Deps{
 		FS:       mockFS,
@@ -270,6 +323,27 @@ func TestWorkspaceService_Create_DryRun(t *testing.T) {
 	mockGit := NewMockGitClient()
 	mockLogger := NewMockLogger()
 	
+	// Set up config and registry
+	configPath := "/home/user/.config/wsm/config.json"
+	configData := `{
+		"workspace_dir": "/home/user/workspaces",
+		"registry_path": "/home/user/.config/wsm/registry.json"
+	}`
+	mockFS.WriteFile(configPath, []byte(configData), 0644)
+	
+	registryPath := "/home/user/.config/wsm/registry.json"
+	registryData := `{
+		"repositories": [
+			{
+				"name": "repo1",
+				"path": "/source/repo1",
+				"categories": ["go"]
+			}
+		],
+		"last_scan": "2023-01-01T00:00:00Z"
+	}`
+	mockFS.WriteFile(registryPath, []byte(registryData), 0644)
+	
 	deps := &Deps{
 		FS:       mockFS,
 		Git:      mockGit,
@@ -297,12 +371,24 @@ func TestWorkspaceService_Create_DryRun(t *testing.T) {
 		t.Fatal("Expected workspace to be returned")
 	}
 	
-	// Verify nothing was actually created in dry run mode
-	if len(mockFS.files) > 0 {
-		t.Error("Expected no files to be created in dry run mode")
+	// Verify workspace-specific files were not created in dry run mode
+	workspaceFiles := 0
+	for path := range mockFS.files {
+		if strings.Contains(path, "test-workspace") {
+			workspaceFiles++
+		}
+	}
+	if workspaceFiles > 0 {
+		t.Errorf("Expected no workspace files to be created in dry run mode, found %d", workspaceFiles)
 	}
 	
-	if len(mockFS.dirs) > 0 {
-		t.Error("Expected no directories to be created in dry run mode")
+	workspaceDirs := 0
+	for path := range mockFS.dirs {
+		if strings.Contains(path, "test-workspace") {
+			workspaceDirs++
+		}
+	}
+	if workspaceDirs > 0 {
+		t.Errorf("Expected no workspace directories to be created in dry run mode, found %d", workspaceDirs)
 	}
 }
