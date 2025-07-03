@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/go-go-golems/workspace-manager/pkg/wsm/config"
 	"github.com/go-go-golems/workspace-manager/pkg/wsm/discovery"
@@ -2314,4 +2315,210 @@ func (ws *WorkspaceService) rebaseRepository(ctx context.Context, workspace doma
 		ux.Field("commits_after", result.CommitsAfter))
 
 	return result, nil
+}
+
+// DetectWorkspaceFromPath detects workspace structure without wsm.json for backwards compatibility
+func (s *WorkspaceService) DetectWorkspaceFromPath(absPath string) (*domain.Workspace, error) {
+	// Walk up the directory tree to find workspace structure
+	for dir := absPath; dir != "/" && dir != ""; dir = filepath.Dir(dir) {
+		// Check if this directory contains repository worktrees
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+
+		// Look for .git files (worktree indicators)
+		gitDirs := 0
+		var gitRepoPaths []string
+		for _, entry := range entries {
+			if entry.IsDir() {
+				gitFile := filepath.Join(dir, entry.Name(), ".git")
+				if stat, err := os.Stat(gitFile); err == nil && stat.Mode().IsRegular() {
+					gitDirs++
+					gitRepoPaths = append(gitRepoPaths, filepath.Join(dir, entry.Name()))
+				}
+			}
+		}
+
+		// If we found multiple git worktrees, this might be a workspace
+		if gitDirs >= 2 {
+			// Create a minimal workspace structure for backwards compatibility
+			workspace := &domain.Workspace{
+				Name:         filepath.Base(dir),
+				Path:         dir,
+				Repositories: make([]domain.Repository, 0, len(gitRepoPaths)),
+			}
+
+			// Analyze each repository to populate proper git information
+			ctx := context.Background()
+			for _, repoPath := range gitRepoPaths {
+				repo, err := s.analyzeRepositoryForBackwardsCompatibility(ctx, repoPath)
+				if err != nil {
+					s.deps.Logger.Debug("Failed to analyze repository, using minimal info",
+						ux.Field("path", repoPath),
+						ux.Field("error", err))
+					// Fallback to minimal repository info
+					repo = &domain.Repository{
+						Name: filepath.Base(repoPath),
+						Path: repoPath,
+					}
+				}
+				workspace.Repositories = append(workspace.Repositories, *repo)
+			}
+
+			// Create metadata file for backwards compatibility
+			if err := s.createWorkspaceMetadata(workspace); err != nil {
+				return nil, errors.Wrap(err, "failed to create workspace metadata")
+			}
+
+			return workspace, nil
+		}
+
+		// Stop at parent directory to avoid infinite loop
+		if filepath.Dir(dir) == dir {
+			break
+		}
+	}
+
+	return nil, errors.New("no workspace structure detected")
+}
+
+// analyzeRepositoryForBackwardsCompatibility analyzes a git repository to populate proper information
+func (s *WorkspaceService) analyzeRepositoryForBackwardsCompatibility(ctx context.Context, repoPath string) (*domain.Repository, error) {
+	name := filepath.Base(repoPath)
+
+	// Get remote URL
+	remoteURL, err := s.deps.Git.RemoteURL(ctx, repoPath)
+	if err != nil {
+		s.deps.Logger.Debug("Failed to get remote URL",
+			ux.Field("path", repoPath),
+			ux.Field("error", err))
+		remoteURL = ""
+	}
+
+	// Get current branch
+	currentBranch, err := s.deps.Git.CurrentBranch(ctx, repoPath)
+	if err != nil {
+		s.deps.Logger.Debug("Failed to get current branch",
+			ux.Field("path", repoPath),
+			ux.Field("error", err))
+		currentBranch = ""
+	}
+
+	// Get branches
+	branches, err := s.deps.Git.Branches(ctx, repoPath)
+	if err != nil {
+		s.deps.Logger.Debug("Failed to get branches",
+			ux.Field("path", repoPath),
+			ux.Field("error", err))
+		branches = []string{}
+	}
+
+	// Get tags
+	tags, err := s.deps.Git.Tags(ctx, repoPath)
+	if err != nil {
+		s.deps.Logger.Debug("Failed to get tags",
+			ux.Field("path", repoPath),
+			ux.Field("error", err))
+		tags = []string{}
+	}
+
+	// Get last commit
+	lastCommit, err := s.deps.Git.LastCommit(ctx, repoPath)
+	if err != nil {
+		s.deps.Logger.Debug("Failed to get last commit",
+			ux.Field("path", repoPath),
+			ux.Field("error", err))
+		lastCommit = ""
+	}
+
+	return &domain.Repository{
+		Name:          name,
+		Path:          repoPath,
+		RemoteURL:     remoteURL,
+		CurrentBranch: currentBranch,
+		Branches:      branches,
+		Tags:          tags,
+		LastCommit:    lastCommit,
+		LastUpdated:   time.Now(),
+		Categories:    []string{}, // Empty for backwards compatibility
+	}, nil
+}
+
+// createWorkspaceMetadata creates the .wsm/wsm.json file for backwards compatibility
+func (s *WorkspaceService) createWorkspaceMetadata(workspace *domain.Workspace) error {
+	metadataDir := filepath.Dir(workspace.MetadataPath())
+
+	// Create .wsm directory if it doesn't exist
+	if !s.deps.FS.Exists(metadataDir) {
+		if err := s.deps.FS.MkdirAll(metadataDir, 0755); err != nil {
+			return errors.Wrap(err, "failed to create .wsm directory")
+		}
+	}
+
+	// Create metadata content
+	metadataBytes, err := json.MarshalIndent(workspace, "", "  ")
+	if err != nil {
+		return errors.Wrap(err, "failed to marshal workspace metadata")
+	}
+
+	// Write metadata file
+	if err := s.deps.FS.WriteFile(workspace.MetadataPath(), metadataBytes, 0644); err != nil {
+		return errors.Wrap(err, "failed to write workspace metadata")
+	}
+
+	return nil
+}
+
+// LoadWorkspaceFromPath loads a workspace from the given path, with backwards compatibility
+func (s *WorkspaceService) LoadWorkspaceFromPath(workspacePath string) (*domain.Workspace, error) {
+	// Make path absolute
+	absPath, err := filepath.Abs(workspacePath)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get absolute path")
+	}
+
+	// Look for .wsm/wsm.json metadata file
+	metadataPath := s.deps.FS.Join(absPath, ".wsm", "wsm.json")
+
+	if !s.deps.FS.Exists(metadataPath) {
+		// Try to find workspace metadata by walking up the directory tree
+		for dir := absPath; dir != "/" && dir != ""; dir = filepath.Dir(dir) {
+			metadataPath = s.deps.FS.Join(dir, ".wsm", "wsm.json")
+			if s.deps.FS.Exists(metadataPath) {
+				absPath = dir
+				break
+			}
+			// Stop at parent directory to avoid infinite loop
+			if filepath.Dir(dir) == dir {
+				break
+			}
+		}
+	}
+
+	if s.deps.FS.Exists(metadataPath) {
+		// Load and parse metadata
+		metadataBytes, err := s.deps.FS.ReadFile(metadataPath)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to read workspace metadata")
+		}
+
+		var workspace domain.Workspace
+		if err := json.Unmarshal(metadataBytes, &workspace); err != nil {
+			return nil, errors.Wrap(err, "failed to parse workspace metadata")
+		}
+
+		// Ensure path is set correctly
+		workspace.Path = absPath
+
+		return &workspace, nil
+	}
+
+	// Backwards compatibility: Try to detect workspace without wsm.json
+	detectedWorkspace, err := s.DetectWorkspaceFromPath(absPath)
+	if err != nil {
+		return nil, errors.Errorf("no workspace found at '%s' or any parent directory. Expected .wsm/wsm.json file or workspace with multiple git repositories", workspacePath)
+	}
+
+	return detectedWorkspace, nil
 }

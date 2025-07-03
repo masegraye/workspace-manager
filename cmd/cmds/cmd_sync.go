@@ -196,7 +196,7 @@ func runSyncAllV2(ctx context.Context, workspacePath string, pull, push, rebase,
 	workspaceService := service.NewWorkspaceService(deps)
 
 	// Load workspace
-	workspace, err := loadWorkspaceFromPathV2(workspacePath, deps)
+	workspace, err := workspaceService.LoadWorkspaceFromPath(workspacePath)
 	if err != nil {
 		return err
 	}
@@ -237,7 +237,7 @@ func runSyncFetchV2(ctx context.Context, workspacePath string) error {
 	workspaceService := service.NewWorkspaceService(deps)
 
 	// Load workspace
-	workspace, err := loadWorkspaceFromPathV2(workspacePath, deps)
+	workspace, err := workspaceService.LoadWorkspaceFromPath(workspacePath)
 	if err != nil {
 		return err
 	}
