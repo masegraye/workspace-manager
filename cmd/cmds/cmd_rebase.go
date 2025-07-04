@@ -2,297 +2,155 @@ package cmds
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"text/tabwriter"
 
+	"github.com/carapace-sh/carapace"
 	"github.com/go-go-golems/workspace-manager/pkg/output"
-	"github.com/go-go-golems/workspace-manager/pkg/wsm"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm/service"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm/ux"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
-// NewRebaseCommand creates the rebase command
 func NewRebaseCommand() *cobra.Command {
 	var (
 		targetBranch string
 		repository   string
 		dryRun       bool
 		interactive  bool
+		workspace    string
+		jsonOut      bool
+		verbose      bool
 	)
 
 	cmd := &cobra.Command{
 		Use:   "rebase [repository]",
-		Short: "Rebase workspace repositories",
-		Long: `Rebase workspace repositories against a target branch.
+		Short: "Rebase workspace repositories using the new service architecture",
+		Long: `Rebase workspace repositories against a target branch using the new service architecture.
+
+The new architecture provides:
+- Faster rebase operations with parallel repository processing
+- Better error handling and conflict detection
+- Structured output with JSON support
+- Clean separation between rebase logic and presentation
+- Detailed tracking of commits before/after rebase
 
 By default, rebases all repositories in the workspace against the 'main' branch.
 You can specify a specific repository to rebase or change the target branch.
 
 Examples:
   # Rebase all repositories against main
-  workspace-manager rebase
+  wsm rebase
 
   # Rebase specific repository against main  
-  workspace-manager rebase my-repo
+  wsm rebase my-repo
 
   # Rebase all repositories against develop
-  workspace-manager rebase --target develop
+  wsm rebase --target develop
 
   # Rebase specific repository against feature/base
-  workspace-manager rebase my-repo --target feature/base
+  wsm rebase my-repo --target feature/base
 
   # Interactive rebase
-  workspace-manager rebase my-repo --interactive
+  wsm rebase my-repo --interactive
 
   # Dry run to see what would be done
-  workspace-manager rebase --dry-run`,
+  wsm rebase --dry-run
+
+  # JSON output for scripting
+  wsm rebase --json
+
+  # Verbose output with detailed information
+  wsm rebase --verbose`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
 				repository = args[0]
 			}
-			return runRebase(cmd.Context(), repository, targetBranch, interactive, dryRun)
+			return runRebaseV2(cmd.Context(), workspace, repository, targetBranch, interactive, dryRun, jsonOut, verbose)
 		},
 	}
 
 	cmd.Flags().StringVar(&targetBranch, "target", "main", "Target branch to rebase onto")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be done without actually rebasing")
 	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Interactive rebase")
+	cmd.Flags().StringVar(&workspace, "workspace", "", "Workspace path")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output results as JSON")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed rebase information")
+
+	carapace.Gen(cmd).PositionalCompletion(WorkspaceNameCompletion())
 
 	return cmd
 }
 
-// RebaseResult represents the result of a rebase operation
-type RebaseResult struct {
-	Repository    string `json:"repository"`
-	Success       bool   `json:"success"`
-	Error         string `json:"error,omitempty"`
-	Rebased       bool   `json:"rebased"`
-	Conflicts     bool   `json:"conflicts"`
-	CommitsBefore int    `json:"commits_before"`
-	CommitsAfter  int    `json:"commits_after"`
-	TargetBranch  string `json:"target_branch"`
-}
+func runRebaseV2(ctx context.Context, workspacePath, repository, targetBranch string, interactive, dryRun, jsonOut, verbose bool) error {
+	// Initialize the new service architecture
+	deps := service.NewDeps()
+	workspaceService := service.NewWorkspaceService(deps)
 
-func runRebase(ctx context.Context, repository, targetBranch string, interactive, dryRun bool) error {
-	workspace, err := detectCurrentWorkspace()
+	// If no workspace specified, try to detect current workspace
+	if workspacePath == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return errors.Wrap(err, "failed to get current directory")
+		}
+		workspacePath = cwd
+	}
+
+	// Load workspace from path
+	workspace, err := loadWorkspaceFromPathV2(workspacePath, deps)
 	if err != nil {
-		return errors.Wrap(err, "failed to detect current workspace")
+		return errors.Wrapf(err, "failed to load workspace from '%s'", workspacePath)
 	}
 
 	if repository != "" {
-		output.PrintHeader("🔄 Rebasing repository '%s' onto '%s'", repository, targetBranch)
+		deps.Logger.Info("Rebasing repository against target branch",
+			ux.Field("workspace", workspace.Name),
+			ux.Field("repository", repository),
+			ux.Field("target_branch", targetBranch))
 	} else {
-		output.PrintHeader("🔄 Rebasing all repositories onto '%s'", targetBranch)
+		deps.Logger.Info("Rebasing all repositories against target branch",
+			ux.Field("workspace", workspace.Name),
+			ux.Field("target_branch", targetBranch))
 	}
 
 	if dryRun {
-		output.PrintInfo("Dry run mode - no changes will be made")
+		deps.Logger.Info("Dry run mode - no changes will be made")
 	}
 
-	var results []RebaseResult
-
-	if repository != "" {
-		// Rebase specific repository
-		result := rebaseRepository(ctx, workspace, repository, targetBranch, interactive, dryRun)
-		results = append(results, result)
-	} else {
-		// Rebase all repositories
-		for _, repo := range workspace.Repositories {
-			result := rebaseRepository(ctx, workspace, repo.Name, targetBranch, interactive, dryRun)
-			results = append(results, result)
-		}
-	}
-
-	return printRebaseResults(results, dryRun)
-}
-
-func rebaseRepository(ctx context.Context, workspace *wsm.Workspace, repoName, targetBranch string, interactive, dryRun bool) RebaseResult {
-	result := RebaseResult{
-		Repository:   repoName,
-		Success:      true,
+	// Create rebase request
+	request := service.RebaseRequest{
 		TargetBranch: targetBranch,
+		Repository:   repository,
+		Interactive:  interactive,
+		DryRun:       dryRun,
 	}
 
-	repoPath := filepath.Join(workspace.Path, repoName)
-
-	// Check if repository exists in workspace
-	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
-		result.Success = false
-		result.Error = "repository not found in workspace"
-		return result
-	}
-
-	// Get current branch
-	currentBranch, err := getCurrentBranch(ctx, repoPath)
+	// Perform rebase using the service
+	response, err := workspaceService.RebaseWorkspace(ctx, *workspace, request)
 	if err != nil {
-		result.Success = false
-		result.Error = fmt.Sprintf("failed to get current branch: %v", err)
-		return result
+		return errors.Wrap(err, "failed to rebase workspace")
 	}
 
-	// Check if we're already on the target branch
-	if currentBranch == targetBranch {
-		result.Success = true
-		result.Error = fmt.Sprintf("already on target branch '%s'", targetBranch)
-		return result
+	// Display results based on format
+	if jsonOut {
+		return printRebaseResultsJSON(response)
 	}
 
-	// Get commits count before rebase
-	commitsBefore, err := getCommitsAhead(ctx, repoPath, targetBranch)
-	if err != nil {
-		output.LogWarn(
-			fmt.Sprintf("Could not get commits count before rebase for '%s': %v", repoName, err),
-			"Could not get commits count before rebase",
-			"error", err,
-			"repo", repoName,
-		)
-	}
-	result.CommitsBefore = commitsBefore
-
-	if dryRun {
-		result.Error = "dry-run mode"
-		return result
-	}
-
-	// Check if target branch exists
-	if !branchExists(ctx, repoPath, targetBranch) {
-		// Try to fetch it from remote
-		if err := fetchBranch(ctx, repoPath, targetBranch); err != nil {
-			result.Success = false
-			result.Error = fmt.Sprintf("target branch '%s' not found locally or on remote", targetBranch)
-			return result
-		}
-	}
-
-	// Perform rebase
-	if err := performRebase(ctx, repoPath, targetBranch, interactive); err != nil {
-		result.Success = false
-		result.Error = fmt.Sprintf("rebase failed: %v", err)
-		result.Conflicts = hasRebaseConflicts(ctx, repoPath)
-		return result
-	}
-
-	result.Rebased = true
-
-	// Get commits count after rebase
-	commitsAfter, err := getCommitsAhead(ctx, repoPath, targetBranch)
-	if err != nil {
-		output.LogWarn(
-			fmt.Sprintf("Could not get commits count after rebase for '%s': %v", repoName, err),
-			"Could not get commits count after rebase",
-			"error", err,
-			"repo", repoName,
-		)
-	}
-	result.CommitsAfter = commitsAfter
-
-	output.LogInfo(
-		fmt.Sprintf("Repository %s rebase completed", repoName),
-		"Repository rebase completed",
-		"repository", repoName,
-		"target", targetBranch,
-		"commits_before", result.CommitsBefore,
-		"commits_after", result.CommitsAfter,
-	)
-
-	return result
+	return printRebaseResultsV2(response, dryRun, verbose)
 }
 
-func getCurrentBranch(ctx context.Context, repoPath string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
-	cmd.Dir = repoPath
-	output, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(output)), nil
+func printRebaseResultsJSON(response *service.RebaseResponse) error {
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(response)
 }
 
-func branchExists(ctx context.Context, repoPath, branch string) bool {
-	cmd := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
-	cmd.Dir = repoPath
-	return cmd.Run() == nil
-}
-
-func fetchBranch(ctx context.Context, repoPath, branch string) error {
-	// Try to fetch the branch from origin
-	cmd := exec.CommandContext(ctx, "git", "fetch", "origin", branch+":"+branch)
-	cmd.Dir = repoPath
-	return cmd.Run()
-}
-
-func performRebase(ctx context.Context, repoPath, targetBranch string, interactive bool) error {
-	var cmd *exec.Cmd
-	if interactive {
-		cmd = exec.CommandContext(ctx, "git", "rebase", "-i", targetBranch)
-	} else {
-		cmd = exec.CommandContext(ctx, "git", "rebase", targetBranch)
-	}
-	cmd.Dir = repoPath
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return errors.Wrapf(err, "git rebase failed: %s", string(output))
-	}
-
-	return nil
-}
-
-func getCommitsAhead(ctx context.Context, repoPath, targetBranch string) (int, error) {
-	cmd := exec.CommandContext(ctx, "git", "rev-list", "--count", fmt.Sprintf("HEAD..%s", targetBranch))
-	cmd.Dir = repoPath
-	output, err := cmd.Output()
-	if err != nil {
-		return 0, err
-	}
-
-	var count int
-	if _, err := fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &count); err != nil {
-		return 0, err
-	}
-
-	return count, nil
-}
-
-func hasRebaseConflicts(ctx context.Context, repoPath string) bool {
-	// Check if rebase is in progress
-	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
-	cmd.Dir = repoPath
-	output, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if len(line) >= 2 && (line[0] == 'U' || line[1] == 'U' ||
-			(line[0] == 'A' && line[1] == 'A') ||
-			(line[0] == 'D' && line[1] == 'D')) {
-			return true
-		}
-	}
-
-	// Also check if .git/rebase-merge or .git/rebase-apply exists
-	rebaseMergeDir := filepath.Join(repoPath, ".git", "rebase-merge")
-	rebaseApplyDir := filepath.Join(repoPath, ".git", "rebase-apply")
-
-	if _, err := os.Stat(rebaseMergeDir); err == nil {
-		return true
-	}
-	if _, err := os.Stat(rebaseApplyDir); err == nil {
-		return true
-	}
-
-	return false
-}
-
-func printRebaseResults(results []RebaseResult, dryRun bool) error {
-	if len(results) == 0 {
+func printRebaseResultsV2(response *service.RebaseResponse, dryRun, verbose bool) error {
+	if len(response.Results) == 0 {
 		output.PrintInfo("No repositories to rebase.")
 		return nil
 	}
@@ -308,23 +166,24 @@ func printRebaseResults(results []RebaseResult, dryRun bool) error {
 		}
 	}()
 
-	fmt.Fprintln(w, "\nREPOSITORY\tSTATUS\tTARGET\tCOMMITS BEFORE\tCOMMITS AFTER\tERROR")
-	fmt.Fprintln(w, "----------\t------\t------\t--------------\t-------------\t-----")
+	// Header
+	if verbose {
+		fmt.Fprintln(w, "\nREPOSITORY\tSTATUS\tCURRENT\tTARGET\tCOMMITS BEFORE\tCOMMITS AFTER\tERROR")
+		fmt.Fprintln(w, "----------\t------\t-------\t------\t--------------\t-------------\t-----")
+	} else {
+		fmt.Fprintln(w, "\nREPOSITORY\tSTATUS\tTARGET\tCOMMITS BEFORE\tCOMMITS AFTER\tERROR")
+		fmt.Fprintln(w, "----------\t------\t------\t--------------\t-------------\t-----")
+	}
 
-	successCount := 0
-	conflictCount := 0
-
-	for _, result := range results {
+	// Results
+	for _, result := range response.Results {
 		status := "✅"
 		if !result.Success {
 			status = "❌"
-		} else {
-			successCount++
 		}
 
 		if result.Conflicts {
 			status = "⚠️"
-			conflictCount++
 		}
 
 		commitsBefore := "-"
@@ -342,22 +201,40 @@ func printRebaseResults(results []RebaseResult, dryRun bool) error {
 			errorMsg = errorMsg[:27] + "..."
 		}
 
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			result.Repository,
-			status,
-			result.TargetBranch,
-			commitsBefore,
-			commitsAfter,
-			errorMsg,
-		)
+		if verbose {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				result.Repository,
+				status,
+				result.CurrentBranch,
+				result.TargetBranch,
+				commitsBefore,
+				commitsAfter,
+				errorMsg,
+			)
+		} else {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+				result.Repository,
+				status,
+				result.TargetBranch,
+				commitsBefore,
+				commitsAfter,
+				errorMsg,
+			)
+		}
 	}
 
 	fmt.Fprintln(w)
 
 	// Summary
-	output.PrintSuccess("Summary: %d/%d repositories rebased successfully", successCount, len(results))
-	if conflictCount > 0 {
-		output.PrintWarning("%d repositories have conflicts", conflictCount)
+	totalRepos := len(response.Results)
+	output.PrintSuccess("Summary: %d/%d repositories rebased successfully", response.SuccessCount, totalRepos)
+
+	if response.ErrorCount > 0 {
+		output.PrintError("%d repositories failed to rebase", response.ErrorCount)
+	}
+
+	if response.ConflictCount > 0 {
+		output.PrintWarning("%d repositories have conflicts", response.ConflictCount)
 		output.PrintInfo("Resolve conflicts manually with:")
 		fmt.Println("  - Fix conflicts in the affected files")
 		fmt.Println("  - git add <resolved-files>")

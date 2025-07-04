@@ -60,22 +60,21 @@ func init() {
 		cmds.NewListCommand(),
 		cmds.NewCreateCommand(),
 		cmds.NewForkCommand(),
+		cmds.NewDeleteCommand(),
 		cmds.NewMergeCommand(),
 		cmds.NewAddCommand(),
 		cmds.NewRemoveCommand(),
-		cmds.NewDeleteCommand(),
 		cmds.NewInfoCommand(),
 		cmds.NewStatusCommand(),
 		cmds.NewPRCommand(),
 		cmds.NewPushCommand(),
-
 		cmds.NewCommitCommand(),
 		cmds.NewSyncCommand(),
 		cmds.NewBranchCommand(),
 		cmds.NewRebaseCommand(),
 		cmds.NewDiffCommand(),
-		cmds.NewLogCommand(),
 		cmds.NewTmuxCommand(),
+		cmds.NewStarshipCommand(),
 	)
 
 	carapace.Gen(rootCmd)

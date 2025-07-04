@@ -4,14 +4,15 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"github.com/go-go-golems/workspace-manager/pkg/output"
-	"github.com/go-go-golems/workspace-manager/pkg/wsm"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/go-go-golems/workspace-manager/pkg/output"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm/domain"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm/service"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -106,8 +107,9 @@ func runPR(ctx context.Context, workspaceName string, dryRun, force, draft bool,
 	}
 
 	// Get workspace status to check branch merge status
-	checker := wsm.NewStatusChecker()
-	status, err := checker.GetWorkspaceStatus(ctx, workspace)
+	deps := service.NewDeps()
+	workspaceService := service.NewWorkspaceService(deps)
+	status, err := workspaceService.GetWorkspaceStatus(ctx, *workspace)
 	if err != nil {
 		return errors.Wrap(err, "failed to get workspace status")
 	}
@@ -212,7 +214,7 @@ func checkGHCLI(ctx context.Context) error {
 	return nil
 }
 
-func checkIfNeedsPR(ctx context.Context, repoStatus wsm.RepositoryStatus, workspacePath string) (PRCandidate, bool) {
+func checkIfNeedsPR(ctx context.Context, repoStatus domain.RepositoryStatus, workspacePath string) (PRCandidate, bool) {
 	candidate := PRCandidate{
 		Repository: repoStatus.Repository.Name,
 		Branch:     repoStatus.CurrentBranch,
