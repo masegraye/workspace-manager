@@ -1,0 +1,2 @@
+- [ ] add a tmux verb that starts a tmux session named after the workspace to do all the workspace work in
+- broke everything in v2, go over verbs much more carefully now
