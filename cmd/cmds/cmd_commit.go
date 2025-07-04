@@ -122,7 +122,7 @@ func runCommitV2(ctx context.Context, workspacePath string, req service.CommitRe
 	}
 
 	// Load workspace from path
-	workspace, err := loadWorkspaceFromPathV2(workspacePath, deps)
+	workspace, err := workspaceService.LoadWorkspaceFromPath(workspacePath)
 	if err != nil {
 		return errors.Wrapf(err, "failed to load workspace from '%s'", workspacePath)
 	}

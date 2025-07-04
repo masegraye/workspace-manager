@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"text/tabwriter"
 
@@ -88,7 +87,7 @@ func runStatusV2(ctx context.Context, workspacePath string, short, untracked, js
 	}
 
 	// Load workspace from path
-	workspace, err := loadWorkspaceFromPathV2(workspacePath, deps)
+	workspace, err := workspaceService.LoadWorkspaceFromPath(workspacePath)
 	if err != nil {
 		return errors.Wrapf(err, "failed to load workspace from '%s'", workspacePath)
 	}
@@ -113,52 +112,6 @@ func runStatusV2(ctx context.Context, workspacePath string, short, untracked, js
 	}
 
 	return printStatusDetailedV2(status, untracked, verbose)
-}
-
-func loadWorkspaceFromPathV2(workspacePath string, deps *service.Deps) (*domain.Workspace, error) {
-	// Make path absolute
-	absPath, err := filepath.Abs(workspacePath)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get absolute path")
-	}
-
-	// Look for .wsm/wsm.json metadata file
-	metadataPath := deps.FS.Join(absPath, ".wsm", "wsm.json")
-
-	if !deps.FS.Exists(metadataPath) {
-		// Try to find workspace metadata by walking up the directory tree
-		for dir := absPath; dir != "/" && dir != ""; dir = filepath.Dir(dir) {
-			metadataPath = deps.FS.Join(dir, ".wsm", "wsm.json")
-			if deps.FS.Exists(metadataPath) {
-				absPath = dir
-				break
-			}
-			// Stop at parent directory to avoid infinite loop
-			if filepath.Dir(dir) == dir {
-				break
-			}
-		}
-	}
-
-	if !deps.FS.Exists(metadataPath) {
-		return nil, errors.Errorf("no workspace found at '%s' or any parent directory. Expected .wsm/wsm.json file", workspacePath)
-	}
-
-	// Load and parse metadata
-	metadataBytes, err := deps.FS.ReadFile(metadataPath)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to read workspace metadata")
-	}
-
-	var workspace domain.Workspace
-	if err := json.Unmarshal(metadataBytes, &workspace); err != nil {
-		return nil, errors.Wrap(err, "failed to parse workspace metadata")
-	}
-
-	// Ensure path is set correctly
-	workspace.Path = absPath
-
-	return &workspace, nil
 }
 
 func printStatusJSON(status *domain.WorkspaceStatus) error {

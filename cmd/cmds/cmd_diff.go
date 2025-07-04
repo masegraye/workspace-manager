@@ -67,7 +67,7 @@ func runDiffV2(ctx context.Context, workspacePath string, staged bool, repoFilte
 	workspaceService := service.NewWorkspaceService(deps)
 
 	// Load workspace from path
-	workspace, err := loadWorkspaceFromPathV2(workspacePath, deps)
+	workspace, err := workspaceService.LoadWorkspaceFromPath(workspacePath)
 	if err != nil {
 		return errors.Wrapf(err, "failed to load workspace from '%s'", workspacePath)
 	}

@@ -126,7 +126,7 @@ func runPushV2(ctx context.Context, remoteName, workspacePath string, req servic
 	}
 
 	// Load workspace from path
-	workspace, err := loadWorkspaceFromPathV2(workspacePath, deps)
+	workspace, err := workspaceService.LoadWorkspaceFromPath(workspacePath)
 	if err != nil {
 		return errors.Wrapf(err, "failed to load workspace from '%s'", workspacePath)
 	}

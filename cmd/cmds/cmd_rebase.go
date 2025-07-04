@@ -101,7 +101,7 @@ func runRebaseV2(ctx context.Context, workspacePath, repository, targetBranch st
 	}
 
 	// Load workspace from path
-	workspace, err := loadWorkspaceFromPathV2(workspacePath, deps)
+	workspace, err := workspaceService.LoadWorkspaceFromPath(workspacePath)
 	if err != nil {
 		return errors.Wrapf(err, "failed to load workspace from '%s'", workspacePath)
 	}
