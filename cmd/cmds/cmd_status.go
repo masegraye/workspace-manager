@@ -114,7 +114,6 @@ func runStatusV2(ctx context.Context, workspacePath string, short, untracked, js
 	return printStatusDetailedV2(status, untracked, verbose)
 }
 
-
 func printStatusJSON(status *domain.WorkspaceStatus) error {
 	data, err := json.MarshalIndent(status, "", "  ")
 	if err != nil {
