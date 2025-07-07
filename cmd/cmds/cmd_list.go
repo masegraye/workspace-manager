@@ -1,17 +1,15 @@
 package cmds
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/go-go-golems/workspace-manager/pkg/output"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm"
 	"os"
 	"sort"
 	"strings"
 	"text/tabwriter"
 
-	"github.com/go-go-golems/workspace-manager/pkg/wsm/domain"
-	"github.com/go-go-golems/workspace-manager/pkg/wsm/service"
-	"github.com/go-go-golems/workspace-manager/pkg/wsm/ux"
+	"github.com/carapace-sh/carapace"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
@@ -42,12 +40,18 @@ func NewListReposCommand() *cobra.Command {
 		Short: "List discovered repositories",
 		Long:  "List all discovered repositories with optional filtering by tags.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runListRepos(cmd.Context(), format, tags)
+			return runListRepos(format, tags)
 		},
 	}
 
 	cmd.Flags().StringVar(&format, "format", "table", "Output format: table, json")
 	cmd.Flags().StringSliceVar(&tags, "tags", nil, "Filter by tags (comma-separated)")
+
+	carapace.Gen(cmd).FlagCompletion(
+		carapace.ActionMap{
+			"tags": TagCompletion(),
+		},
+	)
 
 	return cmd
 }
@@ -60,7 +64,7 @@ func NewListWorkspacesCommand() *cobra.Command {
 		Short: "List created workspaces",
 		Long:  "List all created workspaces, sorted by creation date (newest first).",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runListWorkspaces(cmd.Context(), format)
+			return runListWorkspaces(format)
 		},
 	}
 
@@ -69,23 +73,26 @@ func NewListWorkspacesCommand() *cobra.Command {
 	return cmd
 }
 
-func runListRepos(ctx context.Context, format string, tags []string) error {
-	// Initialize services
-	deps := service.NewDeps()
-	workspaceService := service.NewWorkspaceService(deps)
+func runListRepos(format string, tags []string) error {
+	// Get registry path and load registry
+	registryPath, err := getRegistryPath()
+	if err != nil {
+		return errors.Wrap(err, "failed to get registry path")
+	}
+
+	discoverer := wsm.NewRepositoryDiscoverer(registryPath)
+	if err := discoverer.LoadRegistry(); err != nil {
+		return errors.Wrap(err, "failed to load registry")
+	}
 
 	// Get repositories, optionally filtered by tags
-	repos, err := workspaceService.ListRepositoriesByTags(tags)
-	if err != nil {
-		return errors.Wrap(err, "failed to list repositories")
-	}
+	repos := discoverer.GetRepositoriesByTags(tags)
 
 	if len(repos) == 0 {
 		if len(tags) > 0 {
-			deps.Logger.Info("No repositories found with specified tags",
-				ux.Field("tags", strings.Join(tags, ", ")))
+			output.PrintInfo("No repositories found with tags: %s", strings.Join(tags, ", "))
 		} else {
-			deps.Logger.Info("No repositories found. Run 'wsm discover' to scan for repositories")
+			output.PrintInfo("No repositories found. Run 'workspace-manager discover' to scan for repositories")
 		}
 		return nil
 	}
@@ -100,18 +107,14 @@ func runListRepos(ctx context.Context, format string, tags []string) error {
 	}
 }
 
-func runListWorkspaces(ctx context.Context, format string) error {
-	// Initialize services
-	deps := service.NewDeps()
-	workspaceService := service.NewWorkspaceService(deps)
-
-	workspaces, err := workspaceService.ListWorkspaces()
+func runListWorkspaces(format string) error {
+	workspaces, err := wsm.LoadWorkspaces()
 	if err != nil {
-		return errors.Wrap(err, "failed to list workspaces")
+		return errors.Wrap(err, "failed to load workspaces")
 	}
 
 	if len(workspaces) == 0 {
-		deps.Logger.Info("No workspaces found. Use 'wsm create' to create a workspace")
+		output.PrintInfo("No workspaces found. Use 'workspace-manager create' to create a workspace")
 		return nil
 	}
 
@@ -130,11 +133,15 @@ func runListWorkspaces(ctx context.Context, format string) error {
 	}
 }
 
-func printReposTable(repos []domain.Repository) error {
+func printReposTable(repos []wsm.Repository) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	defer func() {
 		if err := w.Flush(); err != nil {
-			fmt.Printf("Failed to flush table writer: %v\n", err)
+			output.LogWarn(
+				fmt.Sprintf("Failed to flush table writer: %v", err),
+				"Failed to flush table writer",
+				"error", err,
+			)
 		}
 	}()
 
@@ -164,20 +171,19 @@ func printReposTable(repos []domain.Repository) error {
 	return nil
 }
 
-func printReposJSON(repos []domain.Repository) error {
-	data, err := json.MarshalIndent(repos, "", "  ")
-	if err != nil {
-		return errors.Wrap(err, "failed to marshal repositories to JSON")
-	}
-	fmt.Println(string(data))
-	return nil
+func printReposJSON(repos []wsm.Repository) error {
+	return wsm.PrintJSON(repos)
 }
 
-func printWorkspacesTable(workspaces []domain.Workspace) error {
+func printWorkspacesTable(workspaces []wsm.Workspace) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	defer func() {
 		if err := w.Flush(); err != nil {
-			fmt.Printf("Failed to flush table writer: %v\n", err)
+			output.LogWarn(
+				fmt.Sprintf("Failed to flush table writer: %v", err),
+				"Failed to flush table writer",
+				"error", err,
+			)
 		}
 	}()
 
@@ -206,11 +212,6 @@ func printWorkspacesTable(workspaces []domain.Workspace) error {
 	return nil
 }
 
-func printWorkspacesJSON(workspaces []domain.Workspace) error {
-	data, err := json.MarshalIndent(workspaces, "", "  ")
-	if err != nil {
-		return errors.Wrap(err, "failed to marshal workspaces to JSON")
-	}
-	fmt.Println(string(data))
-	return nil
+func printWorkspacesJSON(workspaces []wsm.Workspace) error {
+	return wsm.PrintJSON(workspaces)
 }

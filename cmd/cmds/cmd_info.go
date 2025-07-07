@@ -2,14 +2,13 @@ package cmds
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/go-go-golems/workspace-manager/pkg/output"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm"
 	"os"
 	"strings"
 
-	"github.com/go-go-golems/workspace-manager/pkg/wsm/domain"
-	"github.com/go-go-golems/workspace-manager/pkg/wsm/service"
-	"github.com/go-go-golems/workspace-manager/pkg/wsm/ux"
+	"github.com/carapace-sh/carapace"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
@@ -39,23 +38,23 @@ Available fields:
 
 Examples:
   # Show all workspace info
-  wsm info my-workspace
+  workspace-manager info my-workspace
 
   # Get just the path (useful for cd $(wsm info my-workspace --field path))
-  wsm info my-workspace --field path
+  workspace-manager info my-workspace --field path
 
   # Get workspace name
-  wsm info --field name
+  workspace-manager info --field name
 
   # JSON output
-  wsm info my-workspace --output json`,
+  workspace-manager info my-workspace --output json`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			workspaceName := workspace
 			if len(args) > 0 {
 				workspaceName = args[0]
 			}
-			return runInfoV2(cmd.Context(), workspaceName, outputFormat, outputField)
+			return runInfo(cmd.Context(), workspaceName, outputFormat, outputField)
 		},
 	}
 
@@ -63,14 +62,12 @@ Examples:
 	cmd.Flags().StringVar(&outputField, "field", "", "Output specific field only (path, name, branch, repositories, created, date, time)")
 	cmd.Flags().StringVar(&workspace, "workspace", "", "Workspace name")
 
+	carapace.Gen(cmd).PositionalCompletion(WorkspaceNameCompletion())
+
 	return cmd
 }
 
-func runInfoV2(ctx context.Context, workspaceName string, outputFormat, outputField string) error {
-	// Initialize services
-	deps := service.NewDeps()
-	workspaceService := service.NewWorkspaceService(deps)
-
+func runInfo(ctx context.Context, workspaceName string, outputFormat, outputField string) error {
 	// If no workspace specified, try to detect current workspace
 	if workspaceName == "" {
 		cwd, err := os.Getwd()
@@ -78,38 +75,34 @@ func runInfoV2(ctx context.Context, workspaceName string, outputFormat, outputFi
 			return errors.Wrap(err, "failed to get current directory")
 		}
 
-		detected, err := workspaceService.DetectWorkspace(cwd)
+		detected, err := detectWorkspace(cwd)
 		if err != nil {
-			return errors.Wrap(err, "failed to detect workspace. Use 'wsm info <workspace-name>' or specify --workspace flag")
+			return errors.Wrap(err, "failed to detect workspace. Use 'workspace-manager info <workspace-name>' or specify --workspace flag")
 		}
 		workspaceName = detected
 	}
 
 	// Load workspace
-	workspace, err := workspaceService.LoadWorkspace(workspaceName)
+	workspace, err := loadWorkspace(workspaceName)
 	if err != nil {
 		return errors.Wrapf(err, "failed to load workspace '%s'", workspaceName)
 	}
 
-	deps.Logger.Debug("Loaded workspace info",
-		ux.Field("name", workspace.Name),
-		ux.Field("path", workspace.Path))
-
 	// Handle field-specific output
 	if outputField != "" {
-		return printFieldV2(workspace, outputField)
+		return printField(workspace, outputField)
 	}
 
 	// Handle JSON output
 	if outputFormat == "json" {
-		return printWorkspaceJSONV2(workspace)
+		return wsm.PrintJSON(workspace)
 	}
 
 	// Default table output
-	return printInfoTableV2(workspace)
+	return printInfoTable(workspace)
 }
 
-func printFieldV2(workspace *domain.Workspace, field string) error {
+func printField(workspace *wsm.Workspace, field string) error {
 	switch strings.ToLower(field) {
 	case "path":
 		fmt.Println(workspace.Path)
@@ -131,18 +124,8 @@ func printFieldV2(workspace *domain.Workspace, field string) error {
 	return nil
 }
 
-func printWorkspaceJSONV2(workspace *domain.Workspace) error {
-	data, err := json.MarshalIndent(workspace, "", "  ")
-	if err != nil {
-		return errors.Wrap(err, "failed to marshal workspace to JSON")
-	}
-	fmt.Println(string(data))
-	return nil
-}
-
-func printInfoTableV2(workspace *domain.Workspace) error {
-	fmt.Printf("Workspace Information\n")
-	fmt.Printf("====================\n\n")
+func printInfoTable(workspace *wsm.Workspace) error {
+	output.PrintHeader("Workspace Information")
 	fmt.Printf("  Name:         %s\n", workspace.Name)
 	fmt.Printf("  Path:         %s\n", workspace.Path)
 	fmt.Printf("  Branch:       %s\n", workspace.Branch)
@@ -151,8 +134,7 @@ func printInfoTableV2(workspace *domain.Workspace) error {
 	fmt.Printf("  Go Workspace: %t\n", workspace.GoWorkspace)
 
 	if len(workspace.Repositories) > 0 {
-		fmt.Printf("\nRepositories\n")
-		fmt.Printf("============\n")
+		output.PrintHeader("\nRepositories")
 		for _, repo := range workspace.Repositories {
 			fmt.Printf("  - %s (%s)\n", repo.Name, repo.RemoteURL)
 		}

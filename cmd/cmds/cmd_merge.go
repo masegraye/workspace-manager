@@ -2,16 +2,17 @@ package cmds
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 
-	"github.com/carapace-sh/carapace"
 	"github.com/charmbracelet/huh"
 	"github.com/go-go-golems/workspace-manager/pkg/output"
-	"github.com/go-go-golems/workspace-manager/pkg/wsm/service"
-	"github.com/go-go-golems/workspace-manager/pkg/wsm/ux"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm"
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
 
@@ -21,26 +22,18 @@ func NewMergeCommand() *cobra.Command {
 		force         bool
 		workspace     string
 		keepWorkspace bool
-		jsonOut       bool
 	)
 
 	cmd := &cobra.Command{
 		Use:   "merge [workspace-name]",
-		Short: "Merge a forked workspace back into its base branch using the new service architecture",
-		Long: `Merge a forked workspace back into its base branch and optionally delete the workspace using the new service architecture.
-
-The new architecture provides:
-- Parallel repository processing for faster operations
-- Better error handling and rollback capabilities
-- Structured output with JSON support
-- Enhanced validation and conflict detection
-- Improved merge location validation
+		Short: "Merge a forked workspace back into its base branch and delete the workspace",
+		Long: `Merge a forked workspace back into its base branch and optionally delete the workspace.
 
 This command:
 1. Detects the current workspace (if not specified)
 2. Verifies the workspace is a fork (has a base branch)
 3. Checks if a workspace exists for the base branch and enforces running from within it
-4. Validates that all repositories are clean before merging
+4. Checks that all repositories are clean before merging
 5. For each repository:
    - Switches to the base branch
    - Merges the workspace branch into the base branch
@@ -55,108 +48,215 @@ will detect this situation and provide guidance if you're in the wrong location.
 
 Examples:
   # Merge current workspace back to its base branch
-  wsm merge
+  workspace-manager merge
 
   # Merge a specific workspace
-  wsm merge my-feature-workspace
+  workspace-manager merge my-feature-workspace
 
   # Preview what would be merged without executing
-  wsm merge --dry-run
+  workspace-manager merge --dry-run
 
   # Merge without asking for confirmation
-  wsm merge --force
+  workspace-manager merge --force
 
   # Merge but keep the workspace (don't delete)
-  wsm merge --keep-workspace
-
-  # JSON output for scripting
-  wsm merge --json`,
+  workspace-manager merge --keep-workspace`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			workspaceName := workspace
 			if len(args) > 0 {
 				workspaceName = args[0]
 			}
-			return runMergeV2(cmd.Context(), workspaceName, service.MergeRequest{
-				WorkspaceName: workspaceName,
-				DryRun:        dryRun,
-				Force:         force,
-				KeepWorkspace: keepWorkspace,
-			}, jsonOut)
+			return runMerge(cmd.Context(), workspaceName, dryRun, force, keepWorkspace)
 		},
 	}
 
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be merged without executing")
-	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompts and force merge even with uncommitted changes")
+	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompts")
 	cmd.Flags().StringVar(&workspace, "workspace", "", "Workspace name")
 	cmd.Flags().BoolVar(&keepWorkspace, "keep-workspace", false, "Keep the workspace after merge (don't delete it)")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output result as JSON")
-
-	carapace.Gen(cmd).PositionalCompletion(WorkspaceNameCompletion())
 
 	return cmd
 }
 
-func runMergeV2(ctx context.Context, workspaceName string, req service.MergeRequest, jsonOut bool) error {
-	// Initialize the new service architecture
-	deps := service.NewDeps()
-	workspaceService := service.NewWorkspaceService(deps)
+type MergeCandidate struct {
+	Repository    wsm.Repository
+	WorktreePath  string
+	BaseBranch    string
+	CurrentBranch string
+	HasChanges    bool
+	IsClean       bool
+}
 
-	// If no workspace specified, try to detect current workspace
+func runMerge(ctx context.Context, workspaceName string, dryRun, force, keepWorkspace bool) error {
+	// Detect workspace if not specified
 	if workspaceName == "" {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return errors.Wrap(err, "failed to get current directory")
 		}
 
-		detectedName, err := workspaceService.DetectWorkspace(cwd)
+		detected, err := detectWorkspace(cwd)
 		if err != nil {
-			return errors.Wrap(err, "failed to detect workspace. Use 'wsm merge <workspace-name>' or specify --workspace flag")
+			return errors.Wrap(err, "failed to detect workspace. Use 'workspace-manager merge <workspace-name>' or specify --workspace flag")
 		}
-		workspaceName = detectedName
-		req.WorkspaceName = workspaceName
+		workspaceName = detected
 	}
 
-	deps.Logger.Info("Starting merge operation",
-		ux.Field("workspace", workspaceName),
-		ux.Field("dryRun", req.DryRun),
-		ux.Field("force", req.Force),
-		ux.Field("keepWorkspace", req.KeepWorkspace))
+	// Load workspace
+	workspace, err := loadWorkspace(workspaceName)
+	if err != nil {
+		return errors.Wrapf(err, "failed to load workspace '%s'", workspaceName)
+	}
 
-	// Ask for confirmation unless force is set or dry-run
-	if !req.DryRun && !req.Force && !jsonOut {
-		confirmed, err := confirmMergeV2(workspaceName, req.KeepWorkspace)
+	// Verify this is a forked workspace
+	if workspace.BaseBranch == "" {
+		return errors.New("workspace is not a fork (no base branch specified). Only forked workspaces can be merged.")
+	}
+
+	// Check if there's a workspace for the base branch
+	baseWorkspace, err := findWorkspaceByBranch(workspace.BaseBranch)
+	if err != nil {
+		return errors.Wrapf(err, "failed to check for base branch workspace")
+	}
+
+	// If there's a workspace for the base branch, ensure we're running from within it
+	if baseWorkspace != nil {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return errors.Wrap(err, "failed to get current directory")
+		}
+
+		// Check if current directory is within the base workspace
+		if !strings.HasPrefix(cwd, baseWorkspace.Path) {
+			return errors.Errorf("found workspace '%s' for base branch '%s'. Please run the merge command from within that workspace (at %s) to avoid git worktree conflicts",
+				baseWorkspace.Name, workspace.BaseBranch, baseWorkspace.Path)
+		}
+
+		output.PrintInfo("✓ Running merge from base workspace '%s' as required", baseWorkspace.Name)
+	}
+
+	output.PrintInfo("Merging workspace '%s' (branch: %s → %s)", workspace.Name, workspace.Branch, workspace.BaseBranch)
+
+	// Get workspace status to verify readiness for merge
+	checker := wsm.NewStatusChecker()
+	status, err := checker.GetWorkspaceStatus(ctx, workspace)
+	if err != nil {
+		return errors.Wrap(err, "failed to get workspace status")
+	}
+
+	// Prepare merge candidates
+	var candidates []MergeCandidate
+	var uncleanRepos []string
+
+	for _, repoStatus := range status.Repositories {
+		candidate := MergeCandidate{
+			Repository:    repoStatus.Repository,
+			WorktreePath:  filepath.Join(workspace.Path, repoStatus.Repository.Name),
+			BaseBranch:    workspace.BaseBranch,
+			CurrentBranch: repoStatus.CurrentBranch,
+			HasChanges:    repoStatus.HasChanges,
+			IsClean:       !repoStatus.HasChanges && len(repoStatus.StagedFiles) == 0 && len(repoStatus.UntrackedFiles) == 0,
+		}
+
+		candidates = append(candidates, candidate)
+
+		if !candidate.IsClean {
+			uncleanRepos = append(uncleanRepos, repoStatus.Repository.Name)
+		}
+	}
+
+	// Check for unclean repositories
+	if len(uncleanRepos) > 0 && !force {
+		return errors.Errorf("the following repositories have uncommitted changes: %s. Commit or stash changes first, or use --force", strings.Join(uncleanRepos, ", "))
+	}
+
+	// Verify all repositories are on the workspace branch
+	for _, candidate := range candidates {
+		if candidate.CurrentBranch != workspace.Branch {
+			return errors.Errorf("repository '%s' is on branch '%s', expected '%s'. Switch all repositories to the workspace branch first",
+				candidate.Repository.Name, candidate.CurrentBranch, workspace.Branch)
+		}
+	}
+
+	if dryRun {
+		return previewMerge(workspace, candidates)
+	}
+
+	// Ask for confirmation unless force is set
+	if !force {
+		confirmed, err := confirmMerge(workspace, candidates, keepWorkspace)
 		if err != nil {
 			return errors.Wrap(err, "failed to get user confirmation")
 		}
 		if !confirmed {
-			deps.Logger.Info("Merge cancelled by user")
+			output.PrintInfo("Merge cancelled by user")
 			return nil
 		}
 	}
 
-	// Merge workspace using the new service
-	response, err := workspaceService.MergeWorkspace(ctx, req)
-	if err != nil {
-		return errors.Wrap(err, "failed to merge workspace")
-	}
-
-	// Display results based on format
-	if jsonOut {
-		return printMergeResultJSON(response)
-	}
-
-	return printMergeResultDetailed(response, req.DryRun)
+	// Execute merge
+	return executeMerge(ctx, workspace, candidates, keepWorkspace)
 }
 
-func confirmMergeV2(workspaceName string, keepWorkspace bool) (bool, error) {
+func previewMerge(workspace *wsm.Workspace, candidates []MergeCandidate) error {
+	output.PrintHeader("📋 Merge Preview: %s", workspace.Name)
+	fmt.Println()
+
+	output.PrintInfo("Workspace Details:")
+	fmt.Printf("  Name: %s\n", workspace.Name)
+	fmt.Printf("  Path: %s\n", workspace.Path)
+	fmt.Printf("  Current branch: %s\n", workspace.Branch)
+	fmt.Printf("  Base branch: %s\n", workspace.BaseBranch)
+	fmt.Println()
+
+	output.PrintInfo("Merge Plan:")
+	for _, candidate := range candidates {
+		status := "✓ Clean"
+		if !candidate.IsClean {
+			status = "⚠️  Has changes"
+		}
+
+		fmt.Printf("  %s (%s)\n", candidate.Repository.Name, status)
+		fmt.Printf("    Merge: %s → %s\n", workspace.Branch, workspace.BaseBranch)
+		fmt.Printf("    Push: %s to origin\n", workspace.BaseBranch)
+	}
+
+	fmt.Println()
+	output.PrintInfo("After successful merge:")
+	fmt.Printf("  - All repositories will have %s branch updated\n", workspace.BaseBranch)
+	fmt.Printf("  - Changes will be pushed to origin\n")
+	fmt.Printf("  - Workspace will be deleted\n")
+
+	return nil
+}
+
+func confirmMerge(workspace *wsm.Workspace, candidates []MergeCandidate, keepWorkspace bool) (bool, error) {
 	fmt.Printf("\n")
-	output.PrintWarning("You are about to merge workspace '%s'", workspaceName)
+	output.PrintWarning("You are about to merge workspace '%s'", workspace.Name)
+	fmt.Printf("  Branch: %s → %s\n", workspace.Branch, workspace.BaseBranch)
+	fmt.Printf("  Repositories: %d\n", len(candidates))
 
 	if !keepWorkspace {
 		fmt.Printf("  The workspace will be DELETED after successful merge\n")
 	}
 	fmt.Println()
+
+	// Show any repositories with changes
+	hasChanges := false
+	for _, candidate := range candidates {
+		if !candidate.IsClean {
+			if !hasChanges {
+				output.PrintWarning("The following repositories have uncommitted changes:")
+				hasChanges = true
+			}
+			fmt.Printf("  - %s\n", candidate.Repository.Name)
+		}
+	}
+
+	if hasChanges {
+		fmt.Printf("\nThese changes will be included in the merge.\n")
+	}
 
 	var confirmed bool
 	form := huh.NewForm(
@@ -175,89 +275,195 @@ func confirmMergeV2(workspaceName string, keepWorkspace bool) (bool, error) {
 	return confirmed, nil
 }
 
-func printMergeResultJSON(response *service.MergeResponse) error {
-	data, err := json.MarshalIndent(response, "", "  ")
-	if err != nil {
-		return errors.Wrap(err, "failed to marshal merge response to JSON")
+func executeMerge(ctx context.Context, workspace *wsm.Workspace, candidates []MergeCandidate, keepWorkspace bool) error {
+	output.PrintHeader("🔀 Executing Merge: %s", workspace.Name)
+
+	var successfulMerges []string
+
+	// Execute merge for each repository
+	for _, candidate := range candidates {
+		output.PrintInfo("Processing repository: %s", candidate.Repository.Name)
+
+		if err := mergeRepository(ctx, candidate); err != nil {
+			output.PrintError("Failed to merge repository %s: %v", candidate.Repository.Name, err)
+
+			// Rollback successful merges
+			if len(successfulMerges) > 0 {
+				output.PrintWarning("Rolling back successful merges due to failure...")
+				rollbackMerges(ctx, workspace, successfulMerges)
+			}
+
+			return errors.Wrapf(err, "merge failed for repository %s", candidate.Repository.Name)
+		}
+
+		successfulMerges = append(successfulMerges, candidate.Repository.Name)
+		output.PrintSuccess("✓ Successfully merged %s", candidate.Repository.Name)
 	}
-	fmt.Println(string(data))
+
+	output.PrintSuccess("All repositories merged successfully!")
+
+	// Delete workspace if requested
+	if !keepWorkspace {
+		output.PrintInfo("Deleting workspace '%s'...", workspace.Name)
+
+		wm, err := wsm.NewWorkspaceManager()
+		if err != nil {
+			return errors.Wrap(err, "failed to create workspace manager for deletion")
+		}
+
+		if err := wm.DeleteWorkspace(ctx, workspace.Name, true, true); err != nil {
+			output.PrintWarning("Failed to delete workspace: %v", err)
+			output.PrintInfo("You may need to delete it manually: workspace-manager delete %s", workspace.Name)
+		} else {
+			output.PrintSuccess("✓ Workspace '%s' deleted successfully", workspace.Name)
+		}
+	}
+
+	fmt.Println()
+	output.PrintSuccess("Merge completed successfully!")
+	output.PrintInfo("Summary:")
+	fmt.Printf("  - Merged %d repositories\n", len(successfulMerges))
+	fmt.Printf("  - Branch %s merged into %s\n", workspace.Branch, workspace.BaseBranch)
+	fmt.Printf("  - Changes pushed to origin\n")
+	if !keepWorkspace {
+		fmt.Printf("  - Workspace deleted\n")
+	}
+
 	return nil
 }
 
-func printMergeResultDetailed(response *service.MergeResponse, dryRun bool) error {
-	if dryRun {
-		output.PrintHeader("🔀 Merge Preview: %s", response.WorkspaceName)
-		fmt.Println()
+func mergeRepository(ctx context.Context, candidate MergeCandidate) error {
+	repoPath := candidate.WorktreePath
 
-		fmt.Printf("Workspace: %s\n", response.WorkspaceName)
-		fmt.Printf("Branch: %s → %s\n", response.CurrentBranch, response.BaseBranch)
-		fmt.Printf("Repositories: %d\n", len(response.Candidates))
-		fmt.Println()
+	log.Debug().
+		Str("repository", candidate.Repository.Name).
+		Str("repoPath", repoPath).
+		Str("currentBranch", candidate.CurrentBranch).
+		Str("baseBranch", candidate.BaseBranch).
+		Msg("Starting repository merge")
 
-		output.PrintInfo("Merge Plan:")
-		for _, candidate := range response.Candidates {
-			status := "✓ Clean"
-			if !candidate.IsClean {
-				status = "⚠️  Has changes"
-			}
+	// Step 1: Fetch latest changes
+	output.PrintInfo("  Fetching latest changes...")
+	if err := executeGitCommand(ctx, repoPath, "git", "fetch", "origin"); err != nil {
+		return errors.Wrap(err, "failed to fetch latest changes")
+	}
 
-			fmt.Printf("  %s (%s)\n", candidate.Repository.Name, status)
-			fmt.Printf("    Merge: %s → %s\n", response.CurrentBranch, response.BaseBranch)
-			fmt.Printf("    Push: %s to origin\n", response.BaseBranch)
+	// Step 2: Switch to base branch
+	output.PrintInfo("  Switching to base branch: %s", candidate.BaseBranch)
+	if err := executeGitCommand(ctx, repoPath, "git", "checkout", candidate.BaseBranch); err != nil {
+		return errors.Wrapf(err, "failed to switch to base branch %s", candidate.BaseBranch)
+	}
+
+	// Step 3: Pull latest base branch changes
+	output.PrintInfo("  Pulling latest base branch changes...")
+	if err := executeGitCommand(ctx, repoPath, "git", "pull", "origin", candidate.BaseBranch); err != nil {
+		return errors.Wrapf(err, "failed to pull latest changes for %s", candidate.BaseBranch)
+	}
+
+	// Step 4: Merge workspace branch
+	output.PrintInfo("  Merging %s into %s...", candidate.CurrentBranch, candidate.BaseBranch)
+	if err := executeGitCommand(ctx, repoPath, "git", "merge", candidate.CurrentBranch); err != nil {
+		// Check if this is a merge conflict
+		if isGitMergeConflict(err) {
+			return errors.Errorf("merge conflict detected in %s. Please resolve conflicts manually and retry", candidate.Repository.Name)
+		}
+		return errors.Wrapf(err, "failed to merge %s into %s", candidate.CurrentBranch, candidate.BaseBranch)
+	}
+
+	// Step 5: Push merged changes
+	output.PrintInfo("  Pushing merged changes...")
+	if err := executeGitCommand(ctx, repoPath, "git", "push", "origin", candidate.BaseBranch); err != nil {
+		return errors.Wrapf(err, "failed to push merged changes for %s", candidate.BaseBranch)
+	}
+
+	log.Debug().
+		Str("repository", candidate.Repository.Name).
+		Msg("Repository merge completed successfully")
+
+	return nil
+}
+
+func executeGitCommand(ctx context.Context, repoPath string, args ...string) error {
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.Dir = repoPath
+
+	cmdStr := strings.Join(args, " ")
+	log.Debug().Str("command", cmdStr).Str("repoPath", repoPath).Msg("Executing git command")
+
+	cmdOutput, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Debug().
+			Str("command", cmdStr).
+			Str("repoPath", repoPath).
+			Str("output", string(cmdOutput)).
+			Err(err).
+			Msg("Git command failed")
+
+		return errors.Wrapf(err, "git command failed: %s (output: %s)", cmdStr, string(cmdOutput))
+	}
+
+	log.Debug().
+		Str("command", cmdStr).
+		Str("repoPath", repoPath).
+		Str("output", string(cmdOutput)).
+		Msg("Git command succeeded")
+
+	return nil
+}
+
+func isGitMergeConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "conflict") ||
+		strings.Contains(errStr, "merge failed") ||
+		strings.Contains(errStr, "automatic merge failed")
+}
+
+func rollbackMerges(ctx context.Context, workspace *wsm.Workspace, successfulMerges []string) {
+	output.PrintWarning("🔄 Rolling back %d successful merges...", len(successfulMerges))
+
+	for _, repoName := range successfulMerges {
+		repoPath := filepath.Join(workspace.Path, repoName)
+
+		output.PrintInfo("  Rolling back %s...", repoName)
+
+		// Reset base branch to origin state
+		if err := executeGitCommand(ctx, repoPath, "git", "checkout", workspace.BaseBranch); err != nil {
+			output.PrintWarning("    Failed to checkout %s: %v", workspace.BaseBranch, err)
+			continue
 		}
 
-		fmt.Println()
-		output.PrintInfo("After successful merge:")
-		fmt.Printf("  - All repositories will have %s branch updated\n", response.BaseBranch)
-		fmt.Printf("  - Changes will be pushed to origin\n")
-		if !response.WorkspaceDeleted {
-			fmt.Printf("  - Workspace will be deleted\n")
-		}
-	} else {
-		output.PrintHeader("🔀 Merge Results: %s", response.WorkspaceName)
-		fmt.Println()
-
-		fmt.Printf("Branch: %s → %s\n", response.CurrentBranch, response.BaseBranch)
-		fmt.Printf("Repositories processed: %d\n", len(response.Candidates))
-		fmt.Printf("Successful merges: %d\n", len(response.MergedRepos))
-
-		if len(response.Errors) > 0 {
-			fmt.Printf("Errors: %d\n", len(response.Errors))
+		if err := executeGitCommand(ctx, repoPath, "git", "reset", "--hard", "origin/"+workspace.BaseBranch); err != nil {
+			output.PrintWarning("    Failed to reset %s: %v", workspace.BaseBranch, err)
+			continue
 		}
 
-		fmt.Println()
-
-		// Show successful merges
-		if len(response.MergedRepos) > 0 {
-			fmt.Println("Successfully merged:")
-			for _, repo := range response.MergedRepos {
-				fmt.Printf("✅ %s\n", repo)
-			}
-			fmt.Println()
+		// Switch back to workspace branch
+		if err := executeGitCommand(ctx, repoPath, "git", "checkout", workspace.Branch); err != nil {
+			output.PrintWarning("    Failed to checkout %s: %v", workspace.Branch, err)
 		}
 
-		// Show errors
-		if len(response.Errors) > 0 {
-			fmt.Println("Errors:")
-			for repo, errMsg := range response.Errors {
-				fmt.Printf("❌ %s: %s\n", repo, errMsg)
-			}
-			fmt.Println()
-		}
+		output.PrintInfo("    ✓ Rolled back %s", repoName)
+	}
 
-		// Show summary
-		if len(response.MergedRepos) == 0 && len(response.Errors) == 0 {
-			output.PrintInfo("No repositories found to merge")
-		} else if len(response.MergedRepos) > 0 && len(response.Errors) == 0 {
-			output.PrintSuccess("Successfully merged workspace '%s'", response.WorkspaceName)
-			fmt.Printf("  - Merged %d repositories\n", len(response.MergedRepos))
-			fmt.Printf("  - Branch %s merged into %s\n", response.CurrentBranch, response.BaseBranch)
-			fmt.Printf("  - Changes pushed to origin\n")
-			if response.WorkspaceDeleted {
-				fmt.Printf("  - Workspace deleted\n")
-			}
+	output.PrintInfo("🔄 Rollback completed")
+}
+
+// findWorkspaceByBranch finds a workspace that uses the given branch
+func findWorkspaceByBranch(branchName string) (*wsm.Workspace, error) {
+	workspaces, err := wsm.LoadWorkspaces()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to load workspaces")
+	}
+
+	for _, workspace := range workspaces {
+		if workspace.Branch == branchName {
+			return &workspace, nil
 		}
 	}
 
-	return nil
+	return nil, nil // No workspace found for this branch
 }

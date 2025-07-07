@@ -2,223 +2,197 @@ package cmds
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"github.com/carapace-sh/carapace"
 	"github.com/go-go-golems/workspace-manager/pkg/output"
-	"github.com/go-go-golems/workspace-manager/pkg/wsm/service"
-	"github.com/go-go-golems/workspace-manager/pkg/wsm/ux"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm"
+	"os"
+	"strings"
+
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
-	"os"
 )
 
 func NewCommitCommand() *cobra.Command {
 	var (
-		message      string
-		interactive  bool
-		addAll       bool
-		push         bool
-		dryRun       bool
-		template     string
-		workspace    string
-		jsonOut      bool
-		repositories []string
+		message     string
+		interactive bool
+		addAll      bool
+		push        bool
+		dryRun      bool
+		template    string
 	)
 
 	cmd := &cobra.Command{
-		Use:   "commit [workspace-path]",
-		Short: "Commit changes across workspace repositories using the new service architecture",
-		Long: `Commit related changes across multiple repositories in the workspace using the new service architecture.
-
-The new architecture provides:
-- Parallel repository processing for faster operations
-- Better error handling and recovery
-- Structured output with JSON support
-- Improved commit message templating
-- Enhanced repository filtering capabilities
-
-Features:
-- Interactive file selection (planned)
-- Consistent commit messaging across repositories
-- Batch operations with rollback support
-- Support for conventional commit templates
-- Selective repository commits
-
-If no workspace path is provided, attempts to detect the current workspace from the working directory.
-
-Examples:
-  # Commit changes in current workspace
-  wsm commit -m "feat: add new feature"
-
-  # Commit changes in specific workspace
-  wsm commit /path/to/workspace -m "fix: resolve issue"
-
-  # Use commit message template
-  wsm commit --template feature -m "implement user authentication"
-
-  # Add all files and commit
-  wsm commit -m "chore: update dependencies" --add-all
-
-  # Commit and push changes
-  wsm commit -m "docs: update README" --push
-
-  # Dry run to see what would be committed
-  wsm commit -m "test commit" --dry-run
-
-  # Interactive mode for file selection
-  wsm commit --interactive
-
-  # Commit only specific repositories
-  wsm commit -m "fix: auth service" --repositories auth,shared
-
-  # JSON output for scripting
-  wsm commit -m "feat: new endpoint" --json`,
-		Args: cobra.MaximumNArgs(1),
+		Use:   "commit",
+		Short: "Commit changes across workspace repositories",
+		Long: `Commit related changes across multiple repositories in the workspace.
+Supports interactive file selection and consistent commit messaging.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			workspacePath := workspace
-			if len(args) > 0 {
-				workspacePath = args[0]
-			}
-			return runCommitV2(cmd.Context(), workspacePath, service.CommitRequest{
-				Message:      message,
-				Interactive:  interactive,
-				AddAll:       addAll,
-				Push:         push,
-				DryRun:       dryRun,
-				Template:     template,
-				Repositories: repositories,
-			}, jsonOut)
+			return runCommit(cmd.Context(), message, interactive, addAll, push, dryRun, template)
 		},
 	}
 
 	cmd.Flags().StringVarP(&message, "message", "m", "", "Commit message")
 	cmd.Flags().BoolVar(&interactive, "interactive", false, "Interactive file selection")
-	cmd.Flags().BoolVar(&addAll, "add-all", false, "Add all changes before committing")
+	cmd.Flags().BoolVar(&addAll, "add-all", false, "Add all changes")
 	cmd.Flags().BoolVar(&push, "push", false, "Push changes after commit")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be committed without making changes")
-	cmd.Flags().StringVar(&template, "template", "", "Use commit message template (feature, fix, docs, style, refactor, test, chore)")
-	cmd.Flags().StringVar(&workspace, "workspace", "", "Workspace path")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output result as JSON")
-	cmd.Flags().StringSliceVar(&repositories, "repositories", []string{}, "Specific repositories to commit (comma-separated)")
-
-	carapace.Gen(cmd).PositionalCompletion(WorkspaceNameCompletion())
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be committed")
+	cmd.Flags().StringVar(&template, "template", "", "Use commit message template")
 
 	return cmd
 }
 
-func runCommitV2(ctx context.Context, workspacePath string, req service.CommitRequest, jsonOut bool) error {
-	// Initialize the new service architecture
-	deps := service.NewDeps()
-	workspaceService := service.NewWorkspaceService(deps)
+func runCommit(ctx context.Context, message string, interactive, addAll, push, dryRun bool, template string) error {
+	// Detect current workspace
+	workspace, err := detectCurrentWorkspace()
+	if err != nil {
+		return errors.Wrap(err, "failed to detect current workspace")
+	}
 
-	// If no workspace specified, try to detect current workspace
-	if workspacePath == "" {
-		cwd, err := os.Getwd()
+	// Initialize git operations
+	gitOps := wsm.NewGitOperations(workspace)
+
+	// Get all changes in workspace
+	allChanges, err := gitOps.GetWorkspaceChanges(ctx)
+	if err != nil {
+		return errors.Wrap(err, "failed to get workspace changes")
+	}
+
+	if len(allChanges) == 0 {
+		output.PrintInfo("No changes found in workspace")
+		return nil
+	}
+
+	// Handle commit message
+	if message == "" && template != "" {
+		message = getCommitMessageFromTemplate(template)
+	}
+
+	if message == "" && !interactive {
+		return errors.New("commit message is required. Use -m flag or --interactive mode")
+	}
+
+	// Handle interactive mode
+	var selectedChanges map[string][]wsm.FileChange
+	if interactive {
+		selectedChanges, message, err = selectChangesInteractively(allChanges, message)
 		if err != nil {
-			return errors.Wrap(err, "failed to get current directory")
+			return errors.Wrap(err, "interactive selection failed")
 		}
-		workspacePath = cwd
+	} else {
+		selectedChanges = allChanges
 	}
 
-	// Load workspace from path
-	workspace, err := workspaceService.LoadWorkspaceFromPath(workspacePath)
-	if err != nil {
-		return errors.Wrapf(err, "failed to load workspace from '%s'", workspacePath)
+	if len(selectedChanges) == 0 {
+		output.PrintInfo("No files selected for commit")
+		return nil
 	}
 
-	deps.Logger.Info("Starting commit operation",
-		ux.Field("workspace", workspace.Name),
-		ux.Field("path", workspace.Path),
-		ux.Field("message", req.Message),
-		ux.Field("dry_run", req.DryRun))
-
-	// Commit changes using the new service
-	response, err := workspaceService.CommitWorkspace(ctx, *workspace, req)
-	if err != nil {
-		return errors.Wrap(err, "failed to commit workspace changes")
+	// Create commit operation
+	operation := &wsm.CommitOperation{
+		Message: message,
+		Files:   selectedChanges,
+		DryRun:  dryRun,
+		AddAll:  addAll,
+		Push:    push,
 	}
 
-	// Display results based on format
-	if jsonOut {
-		return printCommitResultJSON(response)
+	// Execute commit
+	if err := gitOps.CommitChanges(ctx, operation); err != nil {
+		return errors.Wrap(err, "commit failed")
 	}
 
-	return printCommitResultDetailed(response, req.DryRun)
-}
-
-func printCommitResultJSON(response *service.CommitResponse) error {
-	data, err := json.MarshalIndent(response, "", "  ")
-	if err != nil {
-		return errors.Wrap(err, "failed to marshal commit response to JSON")
+	if !dryRun {
+		output.PrintSuccess("Successfully committed changes across %d repositories", len(selectedChanges))
+		if push {
+			output.PrintInfo("Changes pushed to remote repositories")
+		}
 	}
-	fmt.Println(string(data))
+
 	return nil
 }
 
-func printCommitResultDetailed(response *service.CommitResponse, dryRun bool) error {
-	if dryRun {
-		output.PrintHeader("Commit Preview (Dry Run)")
-	} else {
-		output.PrintHeader("Commit Results")
+// detectCurrentWorkspace detects the current workspace
+func detectCurrentWorkspace() (*wsm.Workspace, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get current directory")
 	}
 
-	fmt.Printf("Message: %s\n", response.Message)
-	fmt.Printf("Repositories processed: %d\n", len(response.CommittedRepos)+len(response.Errors))
-	fmt.Printf("Successful commits: %d\n", len(response.CommittedRepos))
+	// Try to find workspace by checking if we're in a workspace directory
+	workspaces, err := wsm.LoadWorkspaces()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to load workspaces")
+	}
 
-	if len(response.Errors) > 0 {
-		fmt.Printf("Errors: %d\n", len(response.Errors))
+	for _, workspace := range workspaces {
+		if strings.HasPrefix(cwd, workspace.Path) {
+			return &workspace, nil
+		}
+	}
+
+	return nil, errors.New("not in a workspace directory. Run command from within a workspace")
+}
+
+// selectChangesInteractively allows user to select files interactively
+func selectChangesInteractively(allChanges map[string][]wsm.FileChange, initialMessage string) (map[string][]wsm.FileChange, string, error) {
+	output.PrintHeader("Interactive Commit")
+	fmt.Println()
+
+	// Show all changes
+	output.PrintInfo("Changes found:")
+	repoIndex := 0
+
+	for repoName, changes := range allChanges {
+		fmt.Printf("\n%d. Repository: %s (%d files)\n", repoIndex+1, repoName, len(changes))
+
+		for i, change := range changes {
+			status := wsm.GetStatusSymbol(change.Status)
+			staged := ""
+			if change.Staged {
+				staged = " (staged)"
+			}
+			fmt.Printf("   %c. %s %s%s\n", 'a'+i, status, change.FilePath, staged)
+		}
+		repoIndex++
 	}
 
 	fmt.Println()
 
-	// Show successful commits
-	if len(response.CommittedRepos) > 0 {
-		if dryRun {
-			fmt.Println("Would be committed:")
-		} else {
-			fmt.Println("Successfully committed:")
+	// Get commit message if not provided
+	message := initialMessage
+	if message == "" {
+		fmt.Print("Commit message: ")
+		if _, err := fmt.Scanln(&message); err != nil {
+			return nil, "", errors.Wrap(err, "failed to read commit message")
 		}
-
-		for _, repo := range response.CommittedRepos {
-			changes := response.Changes[repo]
-			fmt.Printf("✅ %s (%d files)\n", repo, len(changes))
-
-			if len(changes) > 0 {
-				// Show first few files
-				displayFiles := changes
-				if len(displayFiles) > 5 {
-					displayFiles = changes[:5]
-				}
-
-				for _, file := range displayFiles {
-					fmt.Printf("   • %s\n", file)
-				}
-
-				if len(changes) > 5 {
-					fmt.Printf("   ... and %d more files\n", len(changes)-5)
-				}
-			}
+		if message == "" {
+			return nil, "", errors.New("commit message is required")
 		}
-		fmt.Println()
 	}
 
-	// Show errors
-	if len(response.Errors) > 0 {
-		fmt.Println("Errors:")
-		for repo, errMsg := range response.Errors {
-			fmt.Printf("❌ %s: %s\n", repo, errMsg)
-		}
-		fmt.Println()
+	// Simple selection - for now, include all changes
+	// TODO: Implement more sophisticated interactive selection
+	output.PrintInfo("Proceeding with all changes...")
+
+	return allChanges, message, nil
+}
+
+// getCommitMessageFromTemplate gets commit message from template
+func getCommitMessageFromTemplate(template string) string {
+	templates := map[string]string{
+		"feature":  "feat: add new feature",
+		"fix":      "fix: resolve issue",
+		"docs":     "docs: update documentation",
+		"style":    "style: formatting changes",
+		"refactor": "refactor: code restructuring",
+		"test":     "test: add or update tests",
+		"chore":    "chore: maintenance tasks",
 	}
 
-	// Show summary
-	if len(response.CommittedRepos) == 0 && len(response.Errors) == 0 {
-		output.PrintInfo("No changes found in workspace")
-	} else if !dryRun && len(response.CommittedRepos) > 0 {
-		output.PrintSuccess("Successfully committed changes across %d repositories", len(response.CommittedRepos))
+	if msg, exists := templates[template]; exists {
+		return msg
 	}
 
-	return nil
+	return template // Use template as-is if not found in predefined templates
 }

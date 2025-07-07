@@ -2,17 +2,18 @@ package cmds
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
-	"github.com/go-go-golems/workspace-manager/pkg/wsm/service"
-	"github.com/go-go-golems/workspace-manager/pkg/wsm/ux"
+	"github.com/carapace-sh/carapace"
+	"github.com/charmbracelet/huh"
+	"github.com/go-go-golems/workspace-manager/pkg/output"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
-// NewDeleteCommand creates the service-based delete command
+// NewDeleteCommand creates the delete command
 func NewDeleteCommand() *cobra.Command {
 	var (
 		force          bool
@@ -31,16 +32,16 @@ the workspace directory and all its contents. Use with caution.
 
 Examples:
   # Delete workspace configuration only
-  wsm delete my-workspace
+  workspace-manager delete my-workspace
 
   # Delete workspace and all files
-  wsm delete my-workspace --remove-files
+  workspace-manager delete my-workspace --remove-files
 
   # Force delete without confirmation
-  wsm delete my-workspace --force --remove-files
+  workspace-manager delete my-workspace --force --remove-files
 
   # Force worktree removal even with uncommitted changes
-  wsm delete my-workspace --force-worktrees --remove-files`,
+  workspace-manager delete my-workspace --force-worktrees --remove-files`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDelete(cmd.Context(), args[0], force, forceWorktrees, removeFiles, outputFormat)
@@ -52,58 +53,55 @@ Examples:
 	cmd.Flags().BoolVar(&removeFiles, "remove-files", false, "Remove workspace files and directories")
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "table", "Output format (table, json)")
 
+	carapace.Gen(cmd).PositionalCompletion(WorkspaceNameCompletion())
+
 	return cmd
 }
 
 func runDelete(ctx context.Context, workspaceName string, force bool, forceWorktrees bool, removeFiles bool, outputFormat string) error {
-	// Initialize services
-	deps := service.NewDeps()
-	workspaceService := service.NewWorkspaceService(deps)
+	manager, err := wsm.NewWorkspaceManager()
+	if err != nil {
+		return errors.Wrap(err, "failed to create workspace manager")
+	}
 
 	// Load workspace
-	workspace, err := workspaceService.LoadWorkspace(workspaceName)
+	workspace, err := manager.LoadWorkspace(workspaceName)
 	if err != nil {
 		return errors.Wrapf(err, "workspace '%s' not found", workspaceName)
 	}
 
 	// Show workspace status first
-	fmt.Printf("Current workspace status for '%s':\n", workspace.Name)
-	status, err := workspaceService.GetWorkspaceStatus(ctx, *workspace)
+	output.PrintHeader("Current workspace status")
+	checker := wsm.NewStatusChecker()
+	status, err := checker.GetWorkspaceStatus(ctx, workspace)
 	if err == nil {
-		// Print basic status info
-		fmt.Printf("  Path: %s\n", workspace.Path)
-		fmt.Printf("  Repositories: %d\n", len(workspace.Repositories))
-		fmt.Printf("  Branch: %s\n", workspace.Branch)
-		fmt.Printf("  Status: %s\n", getStatusSummary(status))
+		if err := printStatusDetailed(status, false); err != nil {
+			output.PrintError("Error showing status: %v", err)
+		}
 	} else {
-		deps.Logger.Error("Error getting status", ux.Field("error", err))
+		output.PrintError("Error getting status: %v", err)
 	}
 	fmt.Printf("\n")
 
 	// Show what will be deleted
 	if outputFormat == "json" {
-		data, err := json.MarshalIndent(workspace, "", "  ")
-		if err != nil {
-			return errors.Wrap(err, "failed to marshal workspace to JSON")
-		}
-		fmt.Println(string(data))
-		return nil
+		return wsm.PrintJSON(workspace)
 	}
 
-	fmt.Printf("Workspace: %s\n", workspace.Name)
+	output.PrintHeader("Workspace: %s", workspace.Name)
 	fmt.Printf("  Path: %s\n", workspace.Path)
 	fmt.Printf("  Repositories: %d\n", len(workspace.Repositories))
 
-	fmt.Printf("\nThis will:\n")
+	output.PrintWarning("This will:")
 	if forceWorktrees {
 		fmt.Printf("  1. Remove git worktrees (git worktree remove --force)\n")
 	} else {
 		fmt.Printf("  1. Remove git worktrees (git worktree remove)\n")
-		fmt.Printf("     ⚠️  Will fail if there are uncommitted changes\n")
+		output.PrintWarning("     Will fail if there are uncommitted changes")
 	}
 
 	if removeFiles {
-		fmt.Printf("  2. 🚨 DELETE the workspace directory and ALL its contents!\n")
+		output.PrintError("  2. DELETE the workspace directory and ALL its contents!")
 		fmt.Printf("     📁 This includes: go.work, AGENT.md, and all repository worktrees\n")
 	} else {
 		fmt.Printf("  2. Remove workspace configuration\n")
@@ -113,46 +111,47 @@ func runDelete(ctx context.Context, workspaceName string, force bool, forceWorkt
 
 	// Confirm deletion unless forced
 	if !force {
-		confirmed, err := deps.Prompter.Confirm(
-			fmt.Sprintf("Are you sure you want to delete workspace '%s'? This action cannot be undone.", workspaceName),
+		var confirmed bool
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewConfirm().
+					Title(fmt.Sprintf("Are you sure you want to delete workspace '%s'?", workspaceName)).
+					Description("This action cannot be undone.").
+					Value(&confirmed),
+			),
 		)
+
+		err := form.Run()
 		if err != nil {
-			// Check if user cancelled
+			// Check if user cancelled/aborted the form
 			errMsg := strings.ToLower(err.Error())
 			if strings.Contains(errMsg, "user aborted") ||
 				strings.Contains(errMsg, "cancelled") ||
 				strings.Contains(errMsg, "aborted") ||
 				strings.Contains(errMsg, "interrupt") {
-				deps.Logger.Info("Operation cancelled")
+				output.PrintInfo("Operation cancelled.")
 				return nil
 			}
 			return errors.Wrap(err, "confirmation failed")
 		}
 
 		if !confirmed {
-			deps.Logger.Info("Operation cancelled")
+			output.PrintInfo("Operation cancelled.")
 			return nil
 		}
 	}
 
 	// Perform deletion
-	if err := workspaceService.DeleteWorkspace(ctx, workspaceName, removeFiles, forceWorktrees); err != nil {
+	if err := manager.DeleteWorkspace(ctx, workspaceName, removeFiles, forceWorktrees); err != nil {
 		return errors.Wrap(err, "failed to delete workspace")
 	}
 
 	if removeFiles {
-		deps.Logger.Info("Workspace and all files deleted successfully", ux.Field("workspace", workspaceName))
+		output.PrintSuccess("Workspace '%s' and all files deleted successfully", workspaceName)
 	} else {
-		deps.Logger.Info("Workspace configuration deleted successfully", ux.Field("workspace", workspaceName))
-		fmt.Printf("Files remain at: %s\n", workspace.Path)
+		output.PrintSuccess("Workspace configuration '%s' deleted successfully", workspaceName)
+		output.PrintInfo("Files remain at: %s", workspace.Path)
 	}
 
 	return nil
-}
-
-// getStatusSummary returns a summary of the workspace status
-func getStatusSummary(status interface{}) string {
-	// This is a placeholder - in a real implementation you'd inspect the status
-	// For now, just return a generic message
-	return "Status information available"
 }

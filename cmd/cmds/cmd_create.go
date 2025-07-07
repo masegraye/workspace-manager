@@ -5,16 +5,14 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/go-go-golems/workspace-manager/pkg/output"
-	"github.com/go-go-golems/workspace-manager/pkg/wsm/domain"
-	"github.com/go-go-golems/workspace-manager/pkg/wsm/service"
-	"github.com/go-go-golems/workspace-manager/pkg/wsm/ux"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
 
-// NewCreateCommand creates the service-based create command
 func NewCreateCommand() *cobra.Command {
 	var (
 		repos        []string
@@ -37,19 +35,16 @@ If no branch is specified, a branch will be automatically created using the patt
 
 Examples:
   # Create workspace with automatic branch (task/my-feature)
-  wsm create my-feature --repos app,lib
+  workspace-manager create my-feature --repos app,lib
 
   # Create workspace with custom branch
-  wsm create my-feature --repos app,lib --branch feature/new-api
+  workspace-manager create my-feature --repos app,lib --branch feature/new-api
 
   # Create workspace with custom branch prefix (bug/my-feature)
-  wsm create my-feature --repos app,lib --branch-prefix bug
+  workspace-manager create my-feature --repos app,lib --branch-prefix bug
 
   # Create workspace from specific base branch
-  wsm create my-feature --repos app,lib --base-branch main
-
-  # Interactive mode
-  wsm create my-feature --interactive`,
+  workspace-manager create my-feature --repos app,lib --base-branch main`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCreate(cmd.Context(), args[0], repos, branch, branchPrefix, baseBranch, agentSource, interactive, dryRun)
@@ -68,19 +63,22 @@ Examples:
 }
 
 func runCreate(ctx context.Context, name string, repos []string, branch, branchPrefix, baseBranch, agentSource string, interactive, dryRun bool) error {
-	// Initialize the new service architecture
-	deps := service.NewDeps()
-	workspaceService := service.NewWorkspaceService(deps)
+	wm, err := wsm.NewWorkspaceManager()
+	if err != nil {
+		return errors.Wrap(err, "failed to create workspace manager")
+	}
 
 	// Handle interactive mode
 	if interactive {
-		selectedRepos, err := selectRepositoriesInteractively(workspaceService, deps.Prompter)
+		selectedRepos, err := selectRepositoriesInteractively(wm)
 		if err != nil {
 			// Check if user cancelled - handle gracefully without error
 			errMsg := strings.ToLower(err.Error())
-			if strings.Contains(errMsg, "cancelled") || strings.Contains(errMsg, "interrupt") {
-				deps.Logger.Info("Operation cancelled by user")
-				return nil
+			if strings.Contains(errMsg, "cancelled by user") ||
+				strings.Contains(errMsg, "creation cancelled") ||
+				strings.Contains(errMsg, "operation cancelled") {
+				output.PrintInfo("Operation cancelled.")
+				return nil // Return success to prevent usage help
 			}
 			return errors.Wrap(err, "interactive selection failed")
 		}
@@ -96,65 +94,36 @@ func runCreate(ctx context.Context, name string, repos []string, branch, branchP
 	finalBranch := branch
 	if finalBranch == "" {
 		finalBranch = fmt.Sprintf("%s/%s", branchPrefix, name)
-		deps.Logger.Info("Using auto-generated branch", ux.Field("branch", finalBranch))
+		output.PrintInfo("Using auto-generated branch: %s", finalBranch)
 		log.Debug().Str("branch", finalBranch).Str("prefix", branchPrefix).Str("name", name).Msg("Generated branch name")
 	}
 
-	// Load AGENT.md content if specified
-	var agentMDContent string
-	if agentSource != "" {
-		content, err := deps.FS.ReadFile(agentSource)
-		if err != nil {
-			return errors.Wrapf(err, "failed to read agent source file: %s", agentSource)
-		}
-		agentMDContent = string(content)
-	}
-
-	// Create workspace using the new service
-	deps.Logger.Info("Creating workspace",
-		ux.Field("name", name),
-		ux.Field("repos", repos),
-		ux.Field("branch", finalBranch),
-		ux.Field("baseBranch", baseBranch),
-		ux.Field("dryRun", dryRun))
-
-	workspace, err := workspaceService.Create(ctx, service.CreateRequest{
-		Name:       name,
-		RepoNames:  repos,
-		Branch:     finalBranch,
-		BaseBranch: baseBranch,
-		AgentMD:    agentMDContent,
-		DryRun:     dryRun,
-	})
-
+	// Create workspace
+	log.Debug().Str("name", name).Strs("repos", repos).Str("branch", finalBranch).Str("baseBranch", baseBranch).Bool("dryRun", dryRun).Msg("Creating workspace")
+	workspace, err := wm.CreateWorkspace(ctx, name, repos, finalBranch, baseBranch, agentSource, dryRun)
 	if err != nil {
 		// Check if user cancelled - handle gracefully without error
 		errMsg := strings.ToLower(err.Error())
-		if strings.Contains(errMsg, "cancelled") || strings.Contains(errMsg, "interrupt") {
-			deps.Logger.Info("Operation cancelled by user")
-			return nil
+		if strings.Contains(errMsg, "cancelled by user") ||
+			strings.Contains(errMsg, "creation cancelled") ||
+			strings.Contains(errMsg, "operation cancelled") {
+			output.PrintInfo("Operation cancelled.")
+			return nil // Return success to prevent usage help
 		}
 		return errors.Wrap(err, "failed to create workspace")
 	}
 
 	// Show results
 	if dryRun {
-		return showWorkspacePreview(*workspace, deps.Logger)
+		return showWorkspacePreview(workspace)
 	}
 
-	// Success output
 	output.PrintSuccess("Workspace '%s' created successfully!", workspace.Name)
 	fmt.Println()
 
 	output.PrintHeader("Workspace Details")
 	fmt.Printf("  Path: %s\n", workspace.Path)
-
-	repoNames := make([]string, len(workspace.Repositories))
-	for i, repo := range workspace.Repositories {
-		repoNames[i] = repo.Name
-	}
-	fmt.Printf("  Repositories: %s\n", strings.Join(repoNames, ", "))
-
+	fmt.Printf("  Repositories: %s\n", strings.Join(getRepositoryNames(workspace.Repositories), ", "))
 	if workspace.Branch != "" {
 		fmt.Printf("  Branch: %s\n", workspace.Branch)
 	}
@@ -162,114 +131,114 @@ func runCreate(ctx context.Context, name string, repos []string, branch, branchP
 		fmt.Printf("  Go workspace: yes (go.work created)\n")
 	}
 	if workspace.AgentMD != "" {
-		fmt.Printf("  AGENT.md: created\n")
+		fmt.Printf("  AGENT.md: copied from %s\n", workspace.AgentMD)
 	}
 
 	fmt.Println()
 	output.PrintInfo("To start working:")
 	fmt.Printf("  cd %s\n", workspace.Path)
 
-	deps.Logger.Info("Workspace creation completed successfully",
-		ux.Field("name", workspace.Name),
-		ux.Field("path", workspace.Path))
-
 	return nil
 }
 
-func selectRepositoriesInteractively(workspaceService *service.WorkspaceService, prompter ux.Prompter) ([]string, error) {
-	// Get available repositories from the registry
-	repos, err := workspaceService.ListRepositories()
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to load repositories")
-	}
+func selectRepositoriesInteractively(wm *wsm.WorkspaceManager) ([]string, error) {
+	repos := wm.Discoverer.GetRepositories()
 
 	if len(repos) == 0 {
-		return nil, errors.New("no repositories found. Run 'wsm discover' first to find repositories")
+		return nil, errors.New("no repositories found. Run 'workspace-manager discover' first")
 	}
 
-	// Convert to options for the prompter
-	options := make([]string, len(repos))
-	for i, repo := range repos {
-		// Show name and categories for better selection
-		categories := ""
-		if len(repo.Categories) > 0 {
-			categories = fmt.Sprintf(" [%s]", strings.Join(repo.Categories, ", "))
-		}
-		options[i] = fmt.Sprintf("%s%s", repo.Name, categories)
+	output.PrintHeader("Select Repositories")
+
+	// Create options for multi-select
+	var options []huh.Option[string]
+	for _, repo := range repos {
+		label := fmt.Sprintf("%s (%s)", repo.Name, strings.Join(repo.Categories, ", "))
+		options = append(options, huh.NewOption(label, repo.Name))
 	}
 
-	// Use multi-select if prompter supports it
-	if multiPrompter, ok := prompter.(ux.MultiSelectPrompter); ok {
-		selected, err := multiPrompter.MultiSelect("Select repositories for the workspace:", options)
-		if err != nil {
-			return nil, err
-		}
+	var selected []string
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title("Choose repositories to include:").
+				Options(options...).
+				Value(&selected),
+		),
+	)
 
-		// Extract repo names from the selected options
-		var repoNames []string
-		for _, selection := range selected {
-			// Extract the name part before any categories
-			name := strings.Split(selection, " [")[0]
-			repoNames = append(repoNames, name)
-		}
-
-		return repoNames, nil
-	}
-
-	// Fallback to single selection if multi-select not supported
-	selected, err := prompter.Select("Select a repository for the workspace:", options)
+	log.Debug().Int("repoCount", len(repos)).Msg("Showing interactive repository selection")
+	err := form.Run()
 	if err != nil {
-		return nil, err
+		// Check if user cancelled/aborted the form
+		errMsg := strings.ToLower(err.Error())
+		if strings.Contains(errMsg, "user aborted") ||
+			strings.Contains(errMsg, "cancelled") ||
+			strings.Contains(errMsg, "aborted") ||
+			strings.Contains(errMsg, "interrupt") {
+			return nil, errors.New("workspace creation cancelled by user")
+		}
+		return nil, errors.Wrap(err, "interactive form failed")
 	}
 
-	// Extract repo name from the selected option
-	name := strings.Split(selected, " [")[0]
-	return []string{name}, nil
+	if len(selected) == 0 {
+		return nil, errors.New("no repositories selected")
+	}
+
+	output.PrintInfo("Selected %d repositories: %s", len(selected), strings.Join(selected, ", "))
+	return selected, nil
 }
 
-func showWorkspacePreview(workspace domain.Workspace, logger ux.Logger) error {
-	output.PrintHeader("Dry Run - Workspace Preview")
-	fmt.Printf("  Name: %s\n", workspace.Name)
-	fmt.Printf("  Path: %s\n", workspace.Path)
-
-	repoNames := make([]string, len(workspace.Repositories))
-	for i, repo := range workspace.Repositories {
-		repoNames[i] = repo.Name
-	}
-	fmt.Printf("  Repositories: %s\n", strings.Join(repoNames, ", "))
-
-	if workspace.Branch != "" {
-		fmt.Printf("  Branch: %s\n", workspace.Branch)
-	}
-	if workspace.GoWorkspace {
-		fmt.Printf("  Go workspace: yes (go.work would be created)\n")
-	}
-	if workspace.AgentMD != "" {
-		fmt.Printf("  AGENT.md: would be created\n")
-	}
-
+func showWorkspacePreview(workspace *wsm.Workspace) error {
+	output.PrintHeader("📋 Workspace Preview: %s", workspace.Name)
 	fmt.Println()
-	output.PrintInfo("Files that would be created:")
 
-	// Show metadata file
-	fmt.Printf("  %s\n", workspace.MetadataPath())
+	output.PrintInfo("Actions to be performed:")
+	fmt.Printf("  1. Create directory structure at: %s\n", workspace.Path)
 
-	// Show go.work if applicable
-	if workspace.GoWorkspace {
-		fmt.Printf("  %s\n", workspace.GoWorkPath())
-	}
-
-	// Show AGENT.md if applicable
-	if workspace.AgentMD != "" {
-		fmt.Printf("  %s\n", workspace.AgentMDPath())
-	}
-
-	// Show worktree paths
-	fmt.Println()
-	output.PrintInfo("Worktrees that would be created:")
+	fmt.Printf("  2. Create worktrees:\n")
 	for _, repo := range workspace.Repositories {
-		fmt.Printf("  %s -> %s\n", repo.Name, workspace.RepositoryWorktreePath(repo.Name))
+		if workspace.Branch != "" {
+			fmt.Printf("     git worktree add -B %s %s/%s\n", workspace.Branch, workspace.Path, repo.Name)
+		} else {
+			fmt.Printf("     git worktree add %s/%s\n", workspace.Path, repo.Name)
+		}
+	}
+
+	stepNum := 3
+	if workspace.GoWorkspace {
+		fmt.Printf("  %d. Initialize go.work and add modules\n", stepNum)
+		stepNum++
+	}
+
+	if workspace.AgentMD != "" {
+		fmt.Printf("  %d. Copy AGENT.md from %s\n", stepNum, workspace.AgentMD)
+		stepNum++
+	}
+
+	// Show setup scripts preview
+	wm, err := wsm.NewWorkspaceManager()
+	if err != nil {
+		return errors.Wrap(err, "failed to create workspace manager for preview")
+	}
+
+	if err := wm.PreviewSetupScripts(workspace, stepNum); err != nil {
+		return errors.Wrap(err, "failed to preview setup scripts")
+	}
+
+	fmt.Println()
+	output.PrintInfo("Repositories to include:")
+	for _, repo := range workspace.Repositories {
+		fmt.Printf("  • %s (%s) [%s]\n", repo.Name, repo.Path, strings.Join(repo.Categories, ", "))
 	}
 
 	return nil
+}
+
+func getRepositoryNames(repos []wsm.Repository) []string {
+	names := make([]string, len(repos))
+	for i, repo := range repos {
+		names[i] = repo.Name
+	}
+	return names
 }

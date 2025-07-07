@@ -2,15 +2,13 @@ package cmds
 
 import (
 	"github.com/carapace-sh/carapace"
-	"github.com/go-go-golems/workspace-manager/pkg/wsm/service"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm"
 )
 
 // WorkspaceNameCompletion returns a carapace.Action that completes workspace names.
 func WorkspaceNameCompletion() carapace.Action {
 	return carapace.ActionCallback(func(ctx carapace.Context) carapace.Action {
-		deps := service.NewDeps()
-		workspaceService := service.NewWorkspaceService(deps)
-		workspaces, err := workspaceService.ListWorkspaces()
+		workspaces, err := wsm.LoadWorkspaces()
 		if err != nil {
 			return carapace.ActionMessage("failed to load workspaces")
 		}
@@ -26,8 +24,19 @@ func WorkspaceNameCompletion() carapace.Action {
 // from the registry for add commands.
 func RepositoryNameCompletion() carapace.Action {
 	return carapace.ActionCallback(func(ctx carapace.Context) carapace.Action {
-		// TODO: Implement repository completion with new service architecture
-		return carapace.ActionMessage("repository completion not yet implemented")
+		registryPath, err := getRegistryPath()
+		if err != nil {
+			return carapace.ActionMessage("failed to get registry path")
+		}
+		discoverer := wsm.NewRepositoryDiscoverer(registryPath)
+		if err := discoverer.LoadRegistry(); err != nil {
+			return carapace.ActionMessage("failed to load registry")
+		}
+		var names []string
+		for _, repo := range discoverer.GetRepositories() {
+			names = append(names, repo.Name)
+		}
+		return carapace.ActionValues(names...)
 	})
 }
 
@@ -40,9 +49,7 @@ func WorkspaceRepositoryCompletion() carapace.Action {
 		}
 		workspaceName := ctx.Args[0]
 
-		deps := service.NewDeps()
-		workspaceService := service.NewWorkspaceService(deps)
-		workspaces, err := workspaceService.ListWorkspaces()
+		workspaces, err := wsm.LoadWorkspaces()
 		if err != nil {
 			return carapace.ActionMessage("failed to load workspaces")
 		}
@@ -63,7 +70,24 @@ func WorkspaceRepositoryCompletion() carapace.Action {
 // TagCompletion returns a carapace.Action that completes repository tags.
 func TagCompletion() carapace.Action {
 	return carapace.ActionCallback(func(ctx carapace.Context) carapace.Action {
-		// TODO: Implement tag completion with new service architecture
-		return carapace.ActionMessage("tag completion not yet implemented")
+		registryPath, err := getRegistryPath()
+		if err != nil {
+			return carapace.ActionMessage("failed to get registry path")
+		}
+		discoverer := wsm.NewRepositoryDiscoverer(registryPath)
+		if err := discoverer.LoadRegistry(); err != nil {
+			return carapace.ActionMessage("failed to load registry")
+		}
+		tagsSet := make(map[string]struct{})
+		for _, repo := range discoverer.GetRepositories() {
+			for _, tag := range repo.Categories {
+				tagsSet[tag] = struct{}{}
+			}
+		}
+		var tags []string
+		for tag := range tagsSet {
+			tags = append(tags, tag)
+		}
+		return carapace.ActionValues(tags...)
 	})
 }

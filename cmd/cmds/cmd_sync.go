@@ -3,13 +3,11 @@ package cmds
 import (
 	"context"
 	"fmt"
+	"github.com/go-go-golems/workspace-manager/pkg/output"
+	"github.com/go-go-golems/workspace-manager/pkg/wsm"
 	"os"
 	"text/tabwriter"
 
-	"github.com/go-go-golems/workspace-manager/pkg/output"
-	"github.com/go-go-golems/workspace-manager/pkg/wsm/service"
-	"github.com/go-go-golems/workspace-manager/pkg/wsm/sync"
-	"github.com/go-go-golems/workspace-manager/pkg/wsm/ux"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
@@ -17,64 +15,34 @@ import (
 func NewSyncCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Synchronize workspace repositories using new service architecture",
-		Long: `Synchronize all repositories in the workspace with their remotes using the new service architecture.
-
-The new architecture provides:
-- Parallel sync operations for faster execution
-- Better error handling and rollback capabilities
-- Detailed progress reporting with structured logging
-- Safe operations with conflict detection and resolution guidance
-
-Supports pulling latest changes, pushing local commits, and fetching updates.`,
+		Short: "Synchronize workspace repositories",
+		Long: `Synchronize all repositories in the workspace with their remotes.
+Supports pulling latest changes and pushing local commits.`,
 	}
 
 	cmd.AddCommand(
-		NewSyncAllCommandV2(),
-		NewSyncPullCommandV2(),
-		NewSyncPushCommandV2(),
-		NewSyncFetchCommandV2(),
+		NewSyncPullCommand(),
+		NewSyncPushCommand(),
+		NewSyncAllCommand(),
 	)
 
 	return cmd
 }
 
-func NewSyncAllCommandV2() *cobra.Command {
+func NewSyncAllCommand() *cobra.Command {
 	var (
-		pull      bool
-		push      bool
-		rebase    bool
-		dryRun    bool
-		workspace string
+		pull   bool
+		push   bool
+		rebase bool
+		dryRun bool
 	)
 
 	cmd := &cobra.Command{
-		Use:   "all [workspace-path]",
-		Short: "Sync all repositories (pull and push) using new architecture",
-		Long: `Synchronize all repositories by pulling latest changes and pushing local commits.
-
-Examples:
-  # Sync current workspace (pull and push)
-  wsm sync all
-
-  # Only pull changes
-  wsm sync all --pull --no-push
-
-  # Only push changes  
-  wsm sync all --no-pull --push
-
-  # Use rebase instead of merge when pulling
-  wsm sync all --rebase
-
-  # Dry run to see what would be done
-  wsm sync all --dry-run`,
-		Args: cobra.MaximumNArgs(1),
+		Use:   "all",
+		Short: "Sync all repositories (pull and push)",
+		Long:  "Synchronize all repositories by pulling latest changes and pushing local commits.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			workspacePath := workspace
-			if len(args) > 0 {
-				workspacePath = args[0]
-			}
-			return runSyncAllV2(cmd.Context(), workspacePath, pull, push, rebase, dryRun)
+			return runSyncAll(cmd.Context(), pull, push, rebase, dryRun)
 		},
 	}
 
@@ -82,301 +50,201 @@ Examples:
 	cmd.Flags().BoolVar(&push, "push", true, "Push local commits")
 	cmd.Flags().BoolVar(&rebase, "rebase", false, "Use rebase when pulling")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be done")
-	cmd.Flags().StringVar(&workspace, "workspace", "", "Workspace path")
 
 	return cmd
 }
 
-func NewSyncPullCommandV2() *cobra.Command {
+func NewSyncPullCommand() *cobra.Command {
 	var (
-		rebase    bool
-		dryRun    bool
-		workspace string
+		rebase bool
+		dryRun bool
 	)
 
 	cmd := &cobra.Command{
-		Use:   "pull [workspace-path]",
-		Short: "Pull latest changes from all repositories using new architecture",
-		Long: `Pull latest changes from remote repositories in the workspace.
-
-Examples:
-  # Pull changes for current workspace
-  wsm sync pull
-
-  # Pull with rebase instead of merge
-  wsm sync pull --rebase
-
-  # Dry run to see what would be pulled
-  wsm sync pull --dry-run`,
-		Args: cobra.MaximumNArgs(1),
+		Use:   "pull",
+		Short: "Pull latest changes from all repositories",
+		Long:  "Pull latest changes from remote repositories in the workspace.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			workspacePath := workspace
-			if len(args) > 0 {
-				workspacePath = args[0]
-			}
-			return runSyncPullV2(cmd.Context(), workspacePath, rebase, dryRun)
+			return runSyncPull(cmd.Context(), rebase, dryRun)
 		},
 	}
 
 	cmd.Flags().BoolVar(&rebase, "rebase", false, "Use rebase instead of merge")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be done")
-	cmd.Flags().StringVar(&workspace, "workspace", "", "Workspace path")
 
 	return cmd
 }
 
-func NewSyncPushCommandV2() *cobra.Command {
-	var (
-		dryRun    bool
-		workspace string
-	)
+func NewSyncPushCommand() *cobra.Command {
+	var dryRun bool
 
 	cmd := &cobra.Command{
-		Use:   "push [workspace-path]",
-		Short: "Push local commits from all repositories using new architecture",
-		Long: `Push local commits to remote repositories in the workspace.
-
-Examples:
-  # Push changes for current workspace
-  wsm sync push
-
-  # Dry run to see what would be pushed
-  wsm sync push --dry-run`,
-		Args: cobra.MaximumNArgs(1),
+		Use:   "push",
+		Short: "Push local commits from all repositories",
+		Long:  "Push local commits to remote repositories in the workspace.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			workspacePath := workspace
-			if len(args) > 0 {
-				workspacePath = args[0]
-			}
-			return runSyncPushV2(cmd.Context(), workspacePath, dryRun)
+			return runSyncPush(cmd.Context(), dryRun)
 		},
 	}
 
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be done")
-	cmd.Flags().StringVar(&workspace, "workspace", "", "Workspace path")
 
 	return cmd
 }
 
-func NewSyncFetchCommandV2() *cobra.Command {
-	var workspace string
-
-	cmd := &cobra.Command{
-		Use:   "fetch [workspace-path]",
-		Short: "Fetch updates from all repositories without merging using new architecture",
-		Long: `Fetch updates from remote repositories without merging them into the working branches.
-This is useful to see what changes are available without modifying your working directories.
-
-Examples:
-  # Fetch updates for current workspace
-  wsm sync fetch
-
-  # Fetch updates for specific workspace
-  wsm sync fetch /path/to/workspace`,
-		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			workspacePath := workspace
-			if len(args) > 0 {
-				workspacePath = args[0]
-			}
-			return runSyncFetchV2(cmd.Context(), workspacePath)
-		},
-	}
-
-	cmd.Flags().StringVar(&workspace, "workspace", "", "Workspace path")
-
-	return cmd
-}
-
-// Implementation functions
-
-func runSyncAllV2(ctx context.Context, workspacePath string, pull, push, rebase, dryRun bool) error {
-	// Initialize services
-	deps := service.NewDeps()
-	workspaceService := service.NewWorkspaceService(deps)
-
-	// Load workspace
-	workspace, err := workspaceService.LoadWorkspaceFromPath(workspacePath)
+func runSyncAll(ctx context.Context, pull, push, rebase, dryRun bool) error {
+	workspace, err := detectCurrentWorkspace()
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to detect current workspace")
 	}
 
-	deps.Logger.Info("Starting workspace sync",
-		ux.Field("workspace", workspace.Name),
-		ux.Field("pull", pull),
-		ux.Field("push", push),
-		ux.Field("rebase", rebase),
-		ux.Field("dryRun", dryRun))
-
-	// Perform sync
-	results, err := workspaceService.SyncWorkspace(ctx, *workspace, sync.SyncOptions{
+	syncOps := wsm.NewSyncOperations(workspace)
+	options := &wsm.SyncOptions{
 		Pull:   pull,
 		Push:   push,
 		Rebase: rebase,
 		DryRun: dryRun,
-	})
-	if err != nil {
-		return errors.Wrap(err, "sync operation failed")
 	}
 
-	// Display results
-	return displaySyncResults(results, dryRun)
-}
-
-func runSyncPullV2(ctx context.Context, workspacePath string, rebase, dryRun bool) error {
-	return runSyncAllV2(ctx, workspacePath, true, false, rebase, dryRun)
-}
-
-func runSyncPushV2(ctx context.Context, workspacePath string, dryRun bool) error {
-	return runSyncAllV2(ctx, workspacePath, false, true, false, dryRun)
-}
-
-func runSyncFetchV2(ctx context.Context, workspacePath string) error {
-	// Initialize services
-	deps := service.NewDeps()
-	workspaceService := service.NewWorkspaceService(deps)
-
-	// Load workspace
-	workspace, err := workspaceService.LoadWorkspaceFromPath(workspacePath)
-	if err != nil {
-		return err
-	}
-
-	deps.Logger.Info("Starting workspace fetch", ux.Field("workspace", workspace.Name))
-
-	// Perform fetch
-	err = workspaceService.FetchWorkspace(ctx, *workspace)
-	if err != nil {
-		return errors.Wrap(err, "fetch operation failed")
-	}
-
-	output.PrintSuccess("Fetch completed for workspace '%s'", workspace.Name)
-	output.PrintInfo("Use 'wsm status' to see what changes are available")
-
-	return nil
-}
-
-func displaySyncResults(results []sync.SyncResult, dryRun bool) error {
+	output.PrintHeader("Synchronizing workspace: %s", workspace.Name)
 	if dryRun {
-		output.PrintHeader("Sync Results (Dry Run)")
-	} else {
-		output.PrintHeader("Sync Results")
+		output.PrintInfo("Dry run mode - no changes will be made")
 	}
 
+	results, err := syncOps.SyncWorkspace(ctx, options)
+	if err != nil {
+		return errors.Wrap(err, "sync failed")
+	}
+
+	return printSyncResults(results, dryRun)
+}
+
+func runSyncPull(ctx context.Context, rebase, dryRun bool) error {
+	workspace, err := detectCurrentWorkspace()
+	if err != nil {
+		return errors.Wrap(err, "failed to detect current workspace")
+	}
+
+	syncOps := wsm.NewSyncOperations(workspace)
+	options := &wsm.SyncOptions{
+		Pull:   true,
+		Push:   false,
+		Rebase: rebase,
+		DryRun: dryRun,
+	}
+
+	output.PrintHeader("Pulling changes for workspace: %s", workspace.Name)
+	if dryRun {
+		output.PrintInfo("Dry run mode - no changes will be made")
+	}
+
+	results, err := syncOps.SyncWorkspace(ctx, options)
+	if err != nil {
+		return errors.Wrap(err, "pull failed")
+	}
+
+	return printSyncResults(results, dryRun)
+}
+
+func runSyncPush(ctx context.Context, dryRun bool) error {
+	workspace, err := detectCurrentWorkspace()
+	if err != nil {
+		return errors.Wrap(err, "failed to detect current workspace")
+	}
+
+	syncOps := wsm.NewSyncOperations(workspace)
+	options := &wsm.SyncOptions{
+		Pull:   false,
+		Push:   true,
+		Rebase: false,
+		DryRun: dryRun,
+	}
+
+	output.PrintHeader("📤 Pushing changes for workspace: %s", workspace.Name)
+	if dryRun {
+		output.PrintInfo("Dry run mode - no changes will be made")
+	}
+
+	results, err := syncOps.SyncWorkspace(ctx, options)
+	if err != nil {
+		return errors.Wrap(err, "push failed")
+	}
+
+	return printSyncResults(results, dryRun)
+}
+
+func printSyncResults(results []wsm.SyncResult, dryRun bool) error {
 	if len(results) == 0 {
-		output.PrintInfo("No repositories to sync")
+		output.PrintInfo("No repositories to sync.")
 		return nil
 	}
 
-	// Count results
-	successful := 0
-	failed := 0
-	pulled := 0
-	pushed := 0
-	conflicts := 0
-
-	for _, result := range results {
-		if result.Success {
-			successful++
-		} else {
-			failed++
-		}
-		if result.Pulled {
-			pulled++
-		}
-		if result.Pushed {
-			pushed++
-		}
-		if result.Conflicts {
-			conflicts++
-		}
-	}
-
-	// Summary
-	fmt.Printf("Summary: %d successful, %d failed", successful, failed)
-	if pulled > 0 {
-		fmt.Printf(", %d pulled", pulled)
-	}
-	if pushed > 0 {
-		fmt.Printf(", %d pushed", pushed)
-	}
-	if conflicts > 0 {
-		fmt.Printf(", %d conflicts", conflicts)
-	}
-	fmt.Println()
-
-	// Detailed results table
-	fmt.Println()
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "REPOSITORY\tSTATUS\tOPERATIONS\tAHEAD/BEHIND\tERROR\n")
-	fmt.Fprintf(w, "----------\t------\t----------\t------------\t-----\n")
+	defer func() {
+		if err := w.Flush(); err != nil {
+			output.LogWarn(
+				fmt.Sprintf("Failed to flush table writer: %v", err),
+				"Failed to flush table writer",
+				"error", err,
+			)
+		}
+	}()
+
+	fmt.Fprintln(w, "\nREPOSITORY\tSTATUS\tPULL\tPUSH\tBEFORE\tAFTER\tERROR")
+	fmt.Fprintln(w, "----------\t------\t----\t----\t------\t-----\t-----")
+
+	successCount := 0
+	conflictCount := 0
 
 	for _, result := range results {
 		status := "✅"
 		if !result.Success {
 			status = "❌"
-		} else if result.Conflicts {
+		} else {
+			successCount++
+		}
+
+		if result.Conflicts {
 			status = "⚠️"
+			conflictCount++
 		}
 
-		operations := ""
+		pullStatus := "-"
 		if result.Pulled {
-			operations += "pulled "
+			pullStatus = "✅"
 		}
+
+		pushStatus := "-"
 		if result.Pushed {
-			operations += "pushed "
-		}
-		if operations == "" {
-			operations = "-"
+			pushStatus = "✅"
 		}
 
-		aheadBehind := fmt.Sprintf("%d/%d", result.AheadAfter, result.BehindAfter)
-		if result.AheadAfter == 0 && result.BehindAfter == 0 {
-			aheadBehind = "-"
+		before := fmt.Sprintf("↑%d ↓%d", result.AheadBefore, result.BehindBefore)
+		after := fmt.Sprintf("↑%d ↓%d", result.AheadAfter, result.BehindAfter)
+
+		errorMsg := result.Error
+		if len(errorMsg) > 30 {
+			errorMsg = errorMsg[:27] + "..."
 		}
 
-		errorMsg := ""
-		if result.Error != "" {
-			errorMsg = result.Error
-			if len(errorMsg) > 30 {
-				errorMsg = errorMsg[:27] + "..."
-			}
-		}
-
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			result.Repository,
 			status,
-			operations,
-			aheadBehind,
-			errorMsg)
+			pullStatus,
+			pushStatus,
+			before,
+			after,
+			errorMsg,
+		)
 	}
 
-	err := w.Flush()
-	if err != nil {
-		return err
-	}
+	fmt.Fprintln(w)
 
-	// Show conflicts and errors in detail
-	if conflicts > 0 {
-		fmt.Println()
-		output.PrintHeader("Repositories with Conflicts")
-		for _, result := range results {
-			if result.Conflicts {
-				fmt.Printf("❌ %s: %s\n", result.Repository, result.Error)
-			}
-		}
-		fmt.Println()
-		output.PrintInfo("Resolve conflicts manually and then run sync again")
-	}
-
-	if failed > 0 {
-		fmt.Println()
-		output.PrintHeader("Failed Operations")
-		for _, result := range results {
-			if !result.Success && !result.Conflicts {
-				fmt.Printf("❌ %s: %s\n", result.Repository, result.Error)
-			}
-		}
+	// Summary
+	output.PrintSuccess("Summary: %d/%d repositories synced successfully", successCount, len(results))
+	if conflictCount > 0 {
+		output.PrintWarning("⚠️  %d repositories have conflicts", conflictCount)
+		output.PrintInfo("Resolve conflicts manually and run sync again.")
 	}
 
 	return nil
