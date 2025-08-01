@@ -431,12 +431,12 @@ func (wm *WorkspaceManager) getGoVersion(ctx context.Context) (string, error) {
 	}
 
 	// Extract version from "go1.23.4" -> "1.23"
-	fullVersion := parts[2]  // "go1.23.4"
+	fullVersion := parts[2] // "go1.23.4"
 	if !strings.HasPrefix(fullVersion, "go") {
 		return "", errors.Errorf("unexpected version format: %s", fullVersion)
 	}
 
-	version := strings.TrimPrefix(fullVersion, "go")  // "1.23.4"
+	version := strings.TrimPrefix(fullVersion, "go") // "1.23.4"
 	versionParts := strings.Split(version, ".")
 	if len(versionParts) < 2 {
 		return "", errors.Errorf("unexpected version format: %s", version)
@@ -465,7 +465,7 @@ func (wm *WorkspaceManager) CreateGoWorkspace(workspace *Workspace) error {
 			"Failed to detect Go version, using default",
 			"error", err,
 		)
-		goVersion = "1.23"  // Safe fallback version
+		goVersion = "1.23" // Safe fallback version
 	}
 
 	content := fmt.Sprintf("go %s\n\nuse (\n", goVersion)
