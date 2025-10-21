@@ -29,17 +29,18 @@ func NewRebaseCommand() *cobra.Command {
 		Short: "Rebase workspace repositories",
 		Long: `Rebase workspace repositories against a target branch.
 
-By default, rebases all repositories in the workspace against the 'main' branch.
-You can specify a specific repository to rebase or change the target branch.
+By default, rebases all repositories in the workspace against their respective default branches.
+Each repository's default branch is automatically detected from the remote.
+You can specify a specific repository to rebase or override the target branch.
 
 Examples:
-  # Rebase all repositories against main
+  # Rebase all repositories against their respective default branches
   workspace-manager rebase
 
-  # Rebase specific repository against main  
+  # Rebase specific repository against its detected default branch  
   workspace-manager rebase my-repo
 
-  # Rebase all repositories against develop
+  # Rebase all repositories against specific branch
   workspace-manager rebase --target develop
 
   # Rebase specific repository against feature/base
@@ -59,7 +60,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&targetBranch, "target", "main", "Target branch to rebase onto")
+	cmd.Flags().StringVar(&targetBranch, "target", "", "Target branch to rebase onto (defaults to detected default branch)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be done without actually rebasing")
 	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Interactive rebase")
 
@@ -85,9 +86,17 @@ func runRebase(ctx context.Context, repository, targetBranch string, interactive
 	}
 
 	if repository != "" {
-		output.PrintHeader("🔄 Rebasing repository '%s' onto '%s'", repository, targetBranch)
+		if targetBranch != "" {
+			output.PrintHeader("🔄 Rebasing repository '%s' onto '%s'", repository, targetBranch)
+		} else {
+			output.PrintHeader("🔄 Rebasing repository '%s' onto detected default branch", repository)
+		}
 	} else {
-		output.PrintHeader("🔄 Rebasing all repositories onto '%s'", targetBranch)
+		if targetBranch != "" {
+			output.PrintHeader("🔄 Rebasing all repositories onto '%s'", targetBranch)
+		} else {
+			output.PrintHeader("🔄 Rebasing all repositories onto their respective default branches")
+		}
 	}
 
 	if dryRun {
@@ -112,13 +121,23 @@ func runRebase(ctx context.Context, repository, targetBranch string, interactive
 }
 
 func rebaseRepository(ctx context.Context, workspace *wsm.Workspace, repoName, targetBranch string, interactive, dryRun bool) RebaseResult {
+	repoPath := filepath.Join(workspace.Path, repoName)
+
+	// If no target branch specified, detect the default branch for this repository
+	actualTargetBranch := targetBranch
+	if actualTargetBranch == "" {
+		if detectedBranch, err := wsm.GetGitDefaultBranch(ctx, repoPath); err == nil {
+			actualTargetBranch = detectedBranch
+		} else {
+			actualTargetBranch = "main" // fallback
+		}
+	}
+
 	result := RebaseResult{
 		Repository:   repoName,
 		Success:      true,
-		TargetBranch: targetBranch,
+		TargetBranch: actualTargetBranch,
 	}
-
-	repoPath := filepath.Join(workspace.Path, repoName)
 
 	// Check if repository exists in workspace
 	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
@@ -136,14 +155,14 @@ func rebaseRepository(ctx context.Context, workspace *wsm.Workspace, repoName, t
 	}
 
 	// Check if we're already on the target branch
-	if currentBranch == targetBranch {
+	if currentBranch == actualTargetBranch {
 		result.Success = true
-		result.Error = fmt.Sprintf("already on target branch '%s'", targetBranch)
+		result.Error = fmt.Sprintf("already on target branch '%s'", actualTargetBranch)
 		return result
 	}
 
 	// Get commits count before rebase
-	commitsBefore, err := getCommitsAhead(ctx, repoPath, targetBranch)
+	commitsBefore, err := getCommitsAhead(ctx, repoPath, actualTargetBranch)
 	if err != nil {
 		output.LogWarn(
 			fmt.Sprintf("Could not get commits count before rebase for '%s': %v", repoName, err),
@@ -160,17 +179,17 @@ func rebaseRepository(ctx context.Context, workspace *wsm.Workspace, repoName, t
 	}
 
 	// Check if target branch exists
-	if !branchExists(ctx, repoPath, targetBranch) {
+	if !branchExists(ctx, repoPath, actualTargetBranch) {
 		// Try to fetch it from remote
-		if err := fetchBranch(ctx, repoPath, targetBranch); err != nil {
+		if err := fetchBranch(ctx, repoPath, actualTargetBranch); err != nil {
 			result.Success = false
-			result.Error = fmt.Sprintf("target branch '%s' not found locally or on remote", targetBranch)
+			result.Error = fmt.Sprintf("target branch '%s' not found locally or on remote", actualTargetBranch)
 			return result
 		}
 	}
 
 	// Perform rebase
-	if err := performRebase(ctx, repoPath, targetBranch, interactive); err != nil {
+	if err := performRebase(ctx, repoPath, actualTargetBranch, interactive); err != nil {
 		result.Success = false
 		result.Error = fmt.Sprintf("rebase failed: %v", err)
 		result.Conflicts = hasRebaseConflicts(ctx, repoPath)
@@ -180,7 +199,7 @@ func rebaseRepository(ctx context.Context, workspace *wsm.Workspace, repoName, t
 	result.Rebased = true
 
 	// Get commits count after rebase
-	commitsAfter, err := getCommitsAhead(ctx, repoPath, targetBranch)
+	commitsAfter, err := getCommitsAhead(ctx, repoPath, actualTargetBranch)
 	if err != nil {
 		output.LogWarn(
 			fmt.Sprintf("Could not get commits count after rebase for '%s': %v", repoName, err),
@@ -195,7 +214,7 @@ func rebaseRepository(ctx context.Context, workspace *wsm.Workspace, repoName, t
 		fmt.Sprintf("Repository %s rebase completed", repoName),
 		"Repository rebase completed",
 		"repository", repoName,
-		"target", targetBranch,
+		"target", actualTargetBranch,
 		"commits_before", result.CommitsBefore,
 		"commits_after", result.CommitsAfter,
 	)
