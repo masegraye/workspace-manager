@@ -30,7 +30,8 @@ test:
 
 build:
 	go generate ./...
-	go build ./...
+	mkdir -p ./dist
+	go build -o ./dist/wsm ./cmd/wsm
 
 goreleaser:
 	goreleaser release --skip=sign --snapshot --clean
