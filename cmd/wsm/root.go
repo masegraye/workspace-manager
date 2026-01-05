@@ -65,6 +65,7 @@ func init() {
 		cmds.NewRemoveCommand(),
 		cmds.NewDeleteCommand(),
 		cmds.NewInfoCommand(),
+		cmds.NewPathCommand(),
 		cmds.NewStatusCommand(),
 		cmds.NewPRCommand(),
 		cmds.NewPushCommand(),
