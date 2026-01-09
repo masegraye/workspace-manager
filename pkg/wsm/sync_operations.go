@@ -156,12 +156,45 @@ func (so *SyncOperations) pullRepository(ctx context.Context, repoPath string, r
 
 // pushRepository pushes changes to remote
 func (so *SyncOperations) pushRepository(ctx context.Context, repoPath string) error {
+	// First, try a simple push
 	cmd := exec.CommandContext(ctx, "git", "push")
 	cmd.Dir = repoPath
 
-	output, err := cmd.CombinedOutput()
+	cmdOutput, err := cmd.CombinedOutput()
 	if err != nil {
-		return errors.Wrapf(err, "git push failed: %s", string(output))
+		// Check if the error is due to missing upstream branch
+		outputStr := string(cmdOutput)
+		if strings.Contains(outputStr, "no upstream branch") ||
+		   strings.Contains(outputStr, "has no upstream branch") {
+			// Get the current branch name
+			branchCmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
+			branchCmd.Dir = repoPath
+			branchOutput, branchErr := branchCmd.Output()
+			if branchErr != nil {
+				return errors.Wrapf(branchErr, "failed to get current branch name")
+			}
+
+			currentBranch := strings.TrimSpace(string(branchOutput))
+
+			// Push with --set-upstream
+			output.LogInfo(
+				fmt.Sprintf("Setting upstream for branch '%s' to origin/%s", currentBranch, currentBranch),
+				"Setting upstream branch",
+				"branch", currentBranch,
+			)
+
+			pushCmd := exec.CommandContext(ctx, "git", "push", "-u", "origin", currentBranch)
+			pushCmd.Dir = repoPath
+			pushOutput, pushErr := pushCmd.CombinedOutput()
+			if pushErr != nil {
+				return errors.Wrapf(pushErr, "git push -u failed: %s", string(pushOutput))
+			}
+
+			return nil
+		}
+
+		// Different error, return it as-is
+		return errors.Wrapf(err, "git push failed: %s", outputStr)
 	}
 
 	return nil
