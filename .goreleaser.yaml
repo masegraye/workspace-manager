@@ -1,5 +1,5 @@
 version: 2
-project_name: workspace-manager
+project_name: wsm
 
 before:
   hooks:
@@ -37,8 +37,8 @@ signs:
     args: [ "--batch", "-u", "{{ .Env.GPG_FINGERPRINT }}", "--output", "${signature}", "--detach-sign", "${artifact}" ]
 
 brews:
-  - name: workspace-manager
-    description: "workspace-manager is a tool"
+  - name: wsm
+    description: "wsm is a tool"
     homepage: "https://github.com/go-go-golems/workspace-manager"
     repository:
       owner: go-go-golems
@@ -54,7 +54,7 @@ nfpms:
     maintainer: Manuel Odendahl <wesen@ruinwesen.com>
 
     description: |-
-      workspace-manager is a tool
+      wsm is a tool
 
     license: MIT
 
