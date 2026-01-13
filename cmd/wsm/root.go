@@ -57,6 +57,8 @@ func init() {
 	// Add all subcommands
 	rootCmd.AddCommand(
 		cmds.NewDiscoverCommand(),
+		cmds.NewValidateCommand(),
+		cmds.NewPruneCommand(),
 		cmds.NewListCommand(),
 		cmds.NewCreateCommand(),
 		cmds.NewForkCommand(),
